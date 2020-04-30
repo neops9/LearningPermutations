@@ -8,7 +8,7 @@ from gensim.models.keyedvectors import KeyedVectors
 class FastText(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.fasttext = KeyedVectors.load_word2vec_format('embeddings/wiki.en.align.vec', limit=5000)
+        self.fasttext = KeyedVectors.load_word2vec_format('embeddings/wiki.en.align.vec')
 
     def get_word_vector(self, word):
         if not word in self.fasttext.vocab:
