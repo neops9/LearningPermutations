@@ -35,7 +35,7 @@ cmd.add_argument("--train", type=str, required=True, help="Path to training data
 cmd.add_argument("--dev", type=str, required=True, help="Path to dev data")
 cmd.add_argument("--model", type=str, required=True, help="Path where to store the model")
 cmd.add_argument("--format", type=str, default="conllu")
-cmd.add_argument("--lr", type=float, default=0.1)
+cmd.add_argument("--lr", type=float, default=0.01)
 cmd.add_argument("--epochs", type=int, default=20, help="Number of epochs for training")
 cmd.add_argument("--batch", type=int, default=1, help="Mini-batch size")
 cmd.add_argument('--storage-device', type=str, default="cpu", help="Device where to store the data. It is useful to keep it on CPU when the dataset is large, even if computation is done on GPU")
@@ -51,7 +51,7 @@ dev_data = list(conll.read(args.dev, format=args.format))
 model = network.Network(args)
 
 model.to(device=args.device)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 steps_per_epoch = len(list(range(0, len(train_data), 1)))
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10 * steps_per_epoch, gamma=0.1)
