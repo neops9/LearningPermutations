@@ -1,4 +1,5 @@
 import torch
+import math
 
 class RandomSampler:
     def __init__(self, n_samples, device="cpu"):
@@ -39,3 +40,39 @@ class Loss:
             bigram_t[samples[i, :-1], samples[i, 1:].reshape(-1)] += 1 / n_samples
 
         return torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t), gold_score
+
+
+class ISLoss:
+    def __init__(self, sampler):
+        self.sampler = sampler
+
+    def __call__(self, pred, gold):
+        bigram, start, end = pred
+
+        n_words = len(gold)
+        samples = self.sampler(n_words)
+        n_samples = samples.shape[0]
+
+        start_t = torch.zeros_like(start)
+        end_t = torch.zeros_like(end)
+        bigram_t = torch.zeros_like(bigram)
+
+        start_t[gold[0]] = 1
+        end_t[gold[n_words - 1]] = 1
+        bigram_t[g[:-1], g[1:]] = 1
+
+        gold_score = torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t)
+
+        start_t = torch.zeros_like(start)
+        end_t = torch.zeros_like(end)
+        bigram_t = torch.zeros_like(bigram)
+        # we cannot batch over samples because inplace op are buffered
+        # and index_add_ is non-deterministic on GPU
+        for i in range(samples.shape[0]):
+            start_t[samples[i, 0]] += 1
+            end_t[samples[i, n_words - 1]] += 1
+            bigram_t[samples[i, :-1], samples[i, 1:].reshape(-1)] += 1
+        Z = torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t)
+        Z = Z * (math.factorial(n_words) / n_samples)
+
+        return -gold_score + Z.log()
