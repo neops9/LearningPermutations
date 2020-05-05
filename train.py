@@ -2,10 +2,10 @@ import argparse
 import shutil
 import random
 import torch
-from learnperm import conll
 
 import network
 import loss
+import time
 import io
 import os
 import torch.nn as nn
@@ -90,6 +90,7 @@ def compute_batch_loss(batch):
     return torch.sum(loss)
 
 for epoch in range(args.epochs):
+    epoch_start_time = time.time()
     model.train()
     train_loss = 0.
     for batch in train_data:
@@ -119,7 +120,12 @@ for epoch in range(args.epochs):
             dev_loss += compute_batch_loss(batch).item()
 
     # score_bigram, score_start, score_end = eval.eval(preds, golds)
-    print("Epoch %i:\tTrain loss: %.4f\t\tDev loss %.4f" % (epoch, train_loss / train_size, dev_loss / dev_size))
+    print(
+        "Epoch %i:\tTrain loss: %.4f\t\tDev loss: %.4f\t\tTiming (sec): %i"
+        %
+        (epoch, train_loss / train_size, dev_loss / dev_size, time.time() - epoch_start_time),
+        flush=True
+    )
 
     """
     if dev_epoch_w > best_score:
