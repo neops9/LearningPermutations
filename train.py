@@ -56,7 +56,7 @@ for epoch in range(args.epochs):
 
     random.shuffle(train_data)
     model.train()
-    epoch_loss = 0
+    epoch_gold_w = 0
     best_score = 0
     best_epoch = 0
 
@@ -78,9 +78,9 @@ for epoch in range(args.epochs):
 
         #mask = torch.ones((n_words, n_words)).fill_diagonal_(0).reshape(-1, 1)
         #loss = F.binary_cross_entropy_with_logits(out, gold, weight=mask)
-        loss = loss_builder(out, gold)
+        loss, gold_w = loss_builder(out, gold)
 
-        epoch_loss += loss.item()
+        epoch_gold_w += gold_w.item()
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -109,7 +109,7 @@ for epoch in range(args.epochs):
             preds.append(pred)
 
     score_bigram, score_start, score_end = eval.eval(preds, golds)
-    print("Epoch %i | Loss %f | Score bigram %f | Score start %f | Score end %f" % (epoch, epoch_loss, score_bigram, score_start, score_end))
+    print("Epoch %i | Gold weights %f | Score bigram %f | Score start %f | Score end %f" % (epoch, epoch_gold_w, score_bigram, score_start, score_end))
 
     if score_bigram > best_score:
         best_score = score_bigram

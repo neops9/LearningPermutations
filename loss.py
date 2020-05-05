@@ -18,25 +18,24 @@ class Loss:
         bigram, start, end = pred
 
         n_words = len(gold)
-        k = self.sampler.k
-
-        start_t = torch.zeros(n_words)
-        start_t[gold[0]] = -1
-
-        end_t = torch.zeros(n_words)
-        end_t[gold[n_words - 1]] = -1
-
-        bigram_t = torch.zeros((n_words, n_words))
-        for i in range(n_words - 1):
-            bigram_t[gold[i]][gold[i+1]] = -1
-
         samples = self.sampler(n_words)
+        n_samples = samples.shape[0]
 
-        for s in samples:
-            start_t[s[0]] += 1/k
-            end_t[s[n_words - 1]] += 1/k
+        start_t = torch.zeros_like(start)
+        end_t = torch.zeros_like(end)
+        bigram_t = torch.zeros_like(bigram)
 
-            for i in range(n_words - 1):
-                bigram_t[s[i]][s[i+1]] += 1/k
+        start_t[gold[0]] = -1
+        end_t[gold[n_words - 1]] = -1
+        bigram_t[gold[:-1], gold[1:]] = -1
 
-        return torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t)
+        gold_score = - (torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t)).item()
+
+        # we cannot batch over samples because inplace op are buffered
+        # and index_add_ is non-deterministic on GPU
+        for i in range(samples.shape[0]):
+            start_t[samples[i, 0]] += 1 / n_samples
+            end_t[samples[i, n_words - 1]] += 1 / n_samples
+            bigram_t[samples[i, :-1], samples[i, 1:].reshape(-1)] += 1 / n_samples
+
+        return torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t), gold_score
