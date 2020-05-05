@@ -98,7 +98,7 @@ for epoch in range(args.epochs):
     # evaluation
     model.eval()
 
-    dev_epoch_loss = 0
+    dev_epoch_w = 0
 
     with torch.no_grad():
         for sentence in dev_data:
@@ -109,15 +109,15 @@ for epoch in range(args.epochs):
 
             loss, gold_w = loss_builder(pred, gold)
 
-            dev_epoch_loss += gold_w
+            dev_epoch_w += gold_w
         
-    dev_epoch_loss /= len(dev_data)
+    dev_epoch_w /= len(dev_data)
 
     # score_bigram, score_start, score_end = eval.eval(preds, golds)
-    print("Epoch %i | Train gold weights %f | Dev gold weights %f" % (epoch, epoch_gold_w, dev_epoch_loss))
+    print("Epoch %i | Train gold weights %f | Dev gold weights %f" % (epoch, epoch_gold_w, dev_epoch_w))
 
-    if dev_epoch_loss > best_score:
-        best_score = dev_epoch_loss
+    if dev_epoch_w > best_score:
+        best_score = dev_epoch_w
         best_epoch = epoch
 
         save_checkpoint({
