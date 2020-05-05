@@ -9,7 +9,7 @@ in_conllus = sys.argv[3:]
 corpus_words = set()
 for path in in_conllus:
     for sentence in conll.read(path, format="conllu"):
-        corpus_words.update([w.lower() for w in sentence["tokens"]])
+        corpus_words.update([w["form"].lower() for w in sentence["tokens"]])
 
 
 with io.open(in_embs, 'r', encoding='utf-8', newline='\n', errors='ignore') as fin:
