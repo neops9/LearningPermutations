@@ -41,23 +41,34 @@ train_langs = args.train_langs.split(",")
 dev_langs = args.dev_langs.split(",")
 if len(train_langs) == 0 or len(dev_langs) == 0:
     raise RuntimeError("No train/dev languages")
-all_langs = train_langs + dev_langs
+all_langs = set(train_langs + dev_langs)
+print("All langs: ", all_langs, flush=True)
+print("Train langs: ", train_langs, flush=True)
+print("Dev langs: ", dev_langs, flush=True)
 
 print("Loading vocabulary and embeddings", flush=True)
 embeddings_table, word_to_id, id_to_word, unk_idx = load_embeddings(args.embeddings, all_langs)
 
 print("Loading train and dev data", flush=True)
 train_data = read_conllu(args.data, train_langs, "train", word_to_id, unk_idx, device=args.storage_device)
-dev_data = read_conllu(args.data, dev_langs, "dev", word_to_id, unk_idx, device=args.storage_device)
 train_size = len(train_data)
-dev_size = len(dev_data)
 train_data = KMeansBatchIterator(train_data, args.batch_size, args.batch_clusters, len, shuffle=True)
-dev_data = KMeansBatchIterator(dev_data, args.batch_size, args.batch_clusters, len, shuffle=False)
+
+# for dev, we separate each language so we can report score per language
+dev_datas = {
+    lang: read_conllu(args.data, [lang], "dev", word_to_id, unk_idx, device=args.storage_device)
+    for lang in dev_langs
+}
+dev_datas = {
+    lang: KMeansBatchIterator(data, args.batch_size, args.batch_clusters, len, shuffle=False)
+    for lang, data in dev_datas.items()
+}
 
 model = network.Network(args, embeddings_table=embeddings_table, add_unk=True)
 model.to(device=args.device)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+# remove the embedding table as it does not require a gradient
+optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
 
 #steps_per_epoch = len(list(range(0, len(train_data), 1)))
 #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10 * steps_per_epoch, gamma=0.1)
@@ -114,16 +125,27 @@ for epoch in range(args.epochs):
 
     # evaluation
     model.eval()
-    dev_loss = 0.
-    with torch.no_grad():
-        for batch in dev_data:
-            dev_loss += compute_batch_loss(batch).item()
+    dev_losses = {}
+    for lang, data in dev_datas.items():
+        dev_loss = 0.
+        dev_denum = 0.
+        with torch.no_grad():
+            for batch in data:
+                dev_denum += sum(len(s) for s in batch)
+                dev_loss += compute_batch_loss(batch).item()
+        dev_loss = dev_loss / dev_denum
+        dev_losses[lang] = dev_loss
 
     # score_bigram, score_start, score_end = eval.eval(preds, golds)
     print(
-        "Epoch %i:\tTrain loss: %.4f\t\tDev loss: %.4f\t\tTiming (sec): %i"
+        "Epoch %i:\tTrain loss: %.4f\t\tDev loss: %s\t\tTiming (sec): %i"
         %
-        (epoch, train_loss / train_size, dev_loss / dev_size, time.time() - epoch_start_time),
+        (
+            epoch,
+            train_loss / train_size,
+            ", ".join("%s=%.4f" % (lang, loss) for lang, loss in dev_losses.items()),
+            time.time() - epoch_start_time
+        ),
         flush=True
     )
 
