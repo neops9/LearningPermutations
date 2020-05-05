@@ -1,5 +1,5 @@
 import sys
-import conll
+from learnperm import conll
 import io
 
 in_embs = sys.argv[1]
@@ -11,7 +11,6 @@ for path in in_conllus:
     for sentence in conll.read(path, format="conllu"):
         corpus_words.update([w["form"].lower() for w in sentence["tokens"]])
 
-
 with io.open(in_embs, 'r', encoding='utf-8', newline='\n', errors='ignore') as fin:
     n, d = map(int, fin.readline().split())
     data = {}
@@ -21,7 +20,7 @@ with io.open(in_embs, 'r', encoding='utf-8', newline='\n', errors='ignore') as f
             data[token] = line
 
 with io.open(out_embs, 'w', encoding='utf-8', newline='\n', errors='ignore') as fout:
-    fout.write("%i %i" % (len(data), d))
+    fout.write(u"%i %i\n" % (len(data), d))
     for line in data.values():
         fout.write(line)
 

@@ -1,9 +1,11 @@
+import io
+
 def read(path, format="conllx"):
     if not (format == "conllx" or format == "conllu"):
         raise RuntimeError("Only conllx and conllu form implemented for now")
 
     sentence = dict()
-    with open(path) as h:
+    with io.open(path, encoding='utf-8') as h:
         need_new = True
         for line in h:
             line = line.strip()

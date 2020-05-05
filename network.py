@@ -2,125 +2,81 @@ import math
 import torch.nn as nn
 import torch
 import numpy as np
-from gensim.models.keyedvectors import KeyedVectors
+
 
 class FastText(torch.nn.Module):
-    def __init__(self, filename):
+    def __init__(self, embedding_table, add_unk):
         super().__init__()
-        self.fasttext = KeyedVectors.load_word2vec_format(filename)
+        n_embs = len(embedding_table)
+        if add_unk:
+            n_embs += 1
+        self.embs = nn.Embedding(n_embs, 300)
+        self.embs.weight.requires_grad=False
 
-    def get_word_vector(self, word):
-        if not word in self.fasttext.vocab:
-            return np.zeros(300)
-
-        return self.fasttext[word]
-
-    def get_word_vectors(self, sentence):
-        return np.array([self.get_word_vector(word) for word in sentence])
+        for i, v in enumerate(embedding_table):
+            self.embs.weight[i, :] = torch.tensor(v)
+        if add_unk:
+            self.embs.weight[-1, :].zero_()
 
     def forward(self, sentence):
-        with torch.no_grad():
-            features = self.get_word_vectors(sentence)
+        return self.embs(sentence)
 
-        return torch.from_numpy(features).type(torch.FloatTensor)
 
 class PermutationModule(nn.Module):
     def __init__(self, args, input_dim, dropout=0.):
         super(PermutationModule, self).__init__()
 
-        self.activation = torch.tanh
-        self.proj_dropout = nn.Dropout(dropout)
-        self.norm = nn.LayerNorm(input_dim)
+        self.bigram_left_proj = nn.Linear(input_dim, args.proj_dim, bias=True)
+        self.bigram_right_proj = nn.Linear(input_dim, args.proj_dim, bias=False)  # bias will be added bu the left proj
+        self.bigram_activation = nn.ReLU()
+        self.bigram_output_proj = nn.Linear(args.proj_dim, 1, bias=True)
 
-        self.left_projection = torch.nn.Parameter(data=torch.Tensor(1, input_dim, args.proj_dim))
-        self.right_projection = torch.nn.Parameter(data=torch.Tensor(1, input_dim, args.proj_dim))
-        self.bias_projection = torch.nn.Parameter(data=torch.Tensor(1, 1, args.proj_dim))
-
-        self.output_projection = torch.nn.Parameter(data=torch.Tensor(args.proj_dim, 1))
-
-        self.projection_start = torch.nn.Parameter(data=torch.Tensor(1, input_dim, args.proj_dim))
-        self.bias_projection_start = torch.nn.Parameter(data=torch.Tensor(1, 1, args.proj_dim))
-        self.output_start_projection = torch.nn.Parameter(data=torch.Tensor(args.proj_dim, 1))
-
-        self.projection_end = torch.nn.Parameter(data=torch.Tensor(1, input_dim, args.proj_dim))
-        self.bias_projection_end = torch.nn.Parameter(data=torch.Tensor(1, 1, args.proj_dim))
-        self.output_end_projection = torch.nn.Parameter(data=torch.Tensor(args.proj_dim, 1))
+        self.start_builder = nn.Sequential(
+            nn.Linear(input_dim, args.proj_dim, bias=True),
+            nn.ReLU(),
+            nn.Linear(args.proj_dim, 1, bias=True)
+        )
+        self.end_builder = nn.Sequential(
+            nn.Linear(input_dim, args.proj_dim, bias=True),
+            nn.ReLU(),
+            nn.Linear(args.proj_dim, 1, bias=True)
+        )
 
         self.initialize_parameters()
 
     def initialize_parameters(self):
         with torch.no_grad():
-            # using the default xavier init function is incorrect.
-            # indeed, we split the W matrix into 2 parts in order to reduce computation
-            # (trick from the papger of Kiperwasser and Goldberg)
-            # the pytorch function will compute the values with the fan_in / 2 instead of the real fan_in
-            # torch.nn.init.xavier_uniform_(self.head_projection)
-            # torch.nn.init.xavier_uniform_(self.mod_projection)
-            fan_in = self.left_projection.size()[1] * 2
-            fan_out = self.left_projection.size()[2]
-
-            std = 1.0 * math.sqrt(2.0 / float(fan_in + fan_out))
-            a = math.sqrt(3.0) * std  # Calculate uniform bounds from standard deviation
-            torch.nn.init.uniform_(self.left_projection, -a, a)
-            torch.nn.init.uniform_(self.right_projection, -a, a)
-
-            self.bias_projection.fill_(0.0)
-            
-            torch.nn.init.xavier_uniform_(self.output_projection)
-
-            torch.nn.init.xavier_uniform_(self.projection_start)
-            torch.nn.init.xavier_uniform_(self.output_start_projection)
-            self.bias_projection_start.fill_(0.0)
-
-            torch.nn.init.xavier_uniform_(self.projection_end)
-            torch.nn.init.xavier_uniform_(self.output_end_projection)
-            self.bias_projection_end.fill_(0.0)
+            self.bigram_left_proj.bias.zero_()
+            self.bigram_output_proj.bias.zero_()
+            self.start_builder[0].bias.zero_()
+            self.start_builder[2].bias.zero_()
+            self.end_builder[0].bias.zero_()
+            self.end_builder[2].bias.zero_()
 
     def forward(self, input):
-        n_words = input.size()[0]
+        # input must be of shape (n batch, n words, emb dim)
+        start = self.start_builder(input)
+        end = self.end_builder(input)
 
-        # Bigram
-        left_proj = input.matmul(self.left_projection)
-        right_proj = input.matmul(self.right_projection)
+        # shape: (n batch, n words, proj dim)
+        left_proj = self.bigram_left_proj(input)
+        right_proj = self.bigram_right_proj(input)
 
-        left_proj = left_proj.view(n_words, 1, -1)
-        right_proj = right_proj.view(1, n_words, -1)
-
-        values = left_proj + right_proj
-        
-        values = values.view(n_words * n_words, -1)
-        values = values + self.bias_projection
-        values = self.activation(values)
-        values = self.proj_dropout(values)
-
-        bigram = values[0].matmul(self.output_projection)
-        bigram = bigram.view(n_words, n_words)
-
-        # Start
-        start_proj = input.matmul(self.projection_start)
-
-        start_values = start_proj + self.bias_projection_start
-        start_values = self.activation(start_values)
-
-        start = start_values[0].matmul(self.output_start_projection).view(n_words)
-
-        # End
-        end_proj = input.matmul(self.projection_end)
-
-        end_values = end_proj + self.bias_projection_end
-        end_values = self.activation(end_values)
-
-        end = end_values[0].matmul(self.output_end_projection).view(n_words)
+        # shape: (n batch, n words, n words, proj dim)
+        proj = left_proj.unsqueeze(1) + right_proj.unsqueeze(2)
+        bigram = self.bigram_output_proj(self.bigram_activation(proj))
 
         return bigram, start, end
-        
+
+
 class Network(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, embeddings_table, add_unk):
         super(Network, self).__init__()
-        self.feature_extractor = FastText(args.fasttext)
+        self.feature_extractor = FastText(embeddings_table, add_unk)
         self.permutation = PermutationModule(args, 300)
 
     def forward(self, input):
+        # input must be of shape: (batch, n words)
         feature = self.feature_extractor(input)
         ret = self.permutation(feature)
         return ret
