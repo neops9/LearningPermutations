@@ -26,6 +26,7 @@ cmd.add_argument('--fasttext', type=str, required=True, help="Path to the FastTe
 cmd.add_argument("--model", type=str, required=True, help="Path where to store the model")
 cmd.add_argument("--format", type=str, default="conllu")
 cmd.add_argument("--lr", type=float, default=0.01)
+cmd.add_argument("--samples", type=int, default=10, help="Number of samples")
 cmd.add_argument("--epochs", type=int, default=20, help="Number of epochs for training")
 cmd.add_argument("--batch", type=int, default=1, help="Mini-batch size")
 cmd.add_argument('--storage-device', type=str, default="cpu", help="Device where to store the data. It is useful to keep it on CPU when the dataset is large, even if computation is done on GPU")
@@ -48,7 +49,7 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10 * steps_per_epoch, gam
 
 #loss_builder = torch.nn.BCEWithLogitsLoss()
 
-sampler = loss.RandomSampler(10)
+sampler = loss.RandomSampler(args.samples)
 loss_builder = loss.Loss(sampler)
 
 for epoch in range(args.epochs):
@@ -80,10 +81,12 @@ for epoch in range(args.epochs):
         #loss = F.binary_cross_entropy_with_logits(out, gold, weight=mask)
         loss, gold_w = loss_builder(out, gold)
 
-        epoch_gold_w += gold_w.item()
+        epoch_gold_w += gold_w
         loss.backward()
         optimizer.step()
         scheduler.step()
+
+    epoch_gold_w /= len(train_data)
 
     save_checkpoint({
             'args': args,
@@ -95,24 +98,26 @@ for epoch in range(args.epochs):
     # evaluation
     model.eval()
 
-    preds, golds = [], []
+    dev_epoch_loss = 0
 
     with torch.no_grad():
         for sentence in dev_data:
             n_words = len(sentence["tokens"])
-            gold = torch.zeros((n_words, n_words))
-            for i in range(n_words - 1):
-                gold[i][i+1] = 1
-            golds.append(gold)
 
             pred = model([word["form"].lower() for word in sentence["tokens"]])
-            preds.append(pred)
+            gold = range(n_words)
 
-    score_bigram, score_start, score_end = eval.eval(preds, golds)
-    print("Epoch %i | Gold weights %f | Score bigram %f | Score start %f | Score end %f" % (epoch, epoch_gold_w, score_bigram, score_start, score_end))
+            loss, gold_w = loss_builder(pred, gold)
 
-    if score_bigram > best_score:
-        best_score = score_bigram
+            dev_epoch_loss += gold_w
+        
+    dev_epoch_loss /= len(dev_data)
+
+    # score_bigram, score_start, score_end = eval.eval(preds, golds)
+    print("Epoch %i | Train gold weights %f | Dev gold weights %f" % (epoch, epoch_gold_w, dev_epoch_loss))
+
+    if dev_epoch_loss > best_score:
+        best_score = dev_epoch_loss
         best_epoch = epoch
 
         save_checkpoint({
