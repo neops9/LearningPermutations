@@ -5,34 +5,24 @@ import random
 import torch
 import numpy as np
 import pydestruct.data.conll as conll
-import pydestruct.algorithms.msa as msa
 import pydestruct.timer as timer
 import pydestruct.parser
-from gensim.models.keyedvectors import KeyedVectors
+import torch.nn.functional as F
 
 import network
+import loss
+import eval
 
 def save_checkpoint(state, is_best, path, filename='checkpoint.pth.tar'):
     torch.save(state, path + filename)
     if is_best:
         shutil.copyfile(path + filename, path + 'model_best.pth.tar')
 
-def eval(preds, golds):
-    total = 0
-    correct = 0
-    for p, g in zip(preds, golds):
-        for line_p, line_g in zip(p, g):
-            total += 1
-            for w_p, w_g in zip(line_p, line_g):
-                if w_g == 1 and w_p >= 0:
-                    correct += 1
-
-    return correct/total
-
 # Read command line
 cmd = argparse.ArgumentParser()
 cmd.add_argument("--train", type=str, required=True, help="Path to training data")
 cmd.add_argument("--dev", type=str, required=True, help="Path to dev data")
+cmd.add_argument('--fasttext', type=str, required=True, help="Path to the FastText vector file")
 cmd.add_argument("--model", type=str, required=True, help="Path where to store the model")
 cmd.add_argument("--format", type=str, default="conllu")
 cmd.add_argument("--lr", type=float, default=0.01)
@@ -49,14 +39,17 @@ train_data = list(conll.read(args.train, format=args.format))
 dev_data = list(conll.read(args.dev, format=args.format))
 
 model = network.Network(args)
-
 model.to(device=args.device)
+
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 steps_per_epoch = len(list(range(0, len(train_data), 1)))
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10 * steps_per_epoch, gamma=0.1)
 
-loss_builder = torch.nn.BCEWithLogitsLoss()
+#loss_builder = torch.nn.BCEWithLogitsLoss()
+
+sampler = loss.RandomSampler(10)
+loss_builder = loss.Loss(sampler)
 
 for epoch in range(args.epochs):
     print('Starting epoch', epoch)
@@ -66,9 +59,8 @@ for epoch in range(args.epochs):
     epoch_loss = 0
     best_score = 0
     best_epoch = 0
-    c = 0
 
-    for sentence in train_data:
+    for i, sentence in enumerate(train_data):
         optimizer.zero_grad()
 
         n_words = len(sentence["tokens"])
@@ -76,21 +68,16 @@ for epoch in range(args.epochs):
         if n_words < 2:
             continue
 
-        if c % 500 == 0 and c != 0:
-            print("Sentence", c)
+        if i % 500 == 0 and i != 0:
+            print("Sentence", i)
 
         batch_inputs = [word["form"].lower() for word in sentence["tokens"]]
-
-        gold = torch.zeros((n_words, n_words))
-        for i in range(n_words - 1):
-            gold[i][i+1] = 1
-        gold = gold.reshape(-1, 1)
+        gold = range(n_words)
 
         out = model(batch_inputs)
-        c += args.batch
 
-        mask = torch.ones((n_words, n_words)).fill_diagonal_(0).reshape(-1, 1)
-        loss_builder = torch.nn.BCEWithLogitsLoss(weight=mask)
+        #mask = torch.ones((n_words, n_words)).fill_diagonal_(0).reshape(-1, 1)
+        #loss = F.binary_cross_entropy_with_logits(out, gold, weight=mask)
         loss = loss_builder(out, gold)
 
         epoch_loss += loss.item()
@@ -105,7 +92,7 @@ for epoch in range(args.epochs):
             'best_score': best_score,
         }, False, args.model)
 
-    # dev evaluation
+    # evaluation
     model.eval()
 
     preds, golds = [], []
@@ -117,16 +104,15 @@ for epoch in range(args.epochs):
             for i in range(n_words - 1):
                 gold[i][i+1] = 1
             golds.append(gold)
-            
+
             pred = model([word["form"].lower() for word in sentence["tokens"]])
-            pred = pred.view(n_words, n_words)
             preds.append(pred)
 
-    score = eval(preds, golds)
-    print("Epoch %i | Loss %f | Score %f" % (epoch, epoch_loss, score))
+    score_bigram, score_start, score_end = eval.eval(preds, golds)
+    print("Epoch %i | Loss %f | Score bigram %f | Score start %f | Score end %f" % (epoch, epoch_loss, score_bigram, score_start, score_end))
 
-    if score > best_score:
-        best_score = score
+    if score_bigram > best_score:
+        best_score = score_bigram
         best_epoch = epoch
 
         save_checkpoint({
