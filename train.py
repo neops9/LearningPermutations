@@ -1,13 +1,9 @@
 import argparse
 import shutil
-import random
 import torch
-
-import network
-import loss
+import sys
+from learnperm import loss, network
 import time
-import io
-import os
 import torch.nn as nn
 from learnperm.data import load_embeddings, read_conllu
 from learnperm.batch import KMeansBatchIterator
@@ -25,7 +21,7 @@ cmd.add_argument('--train-langs', type=str, required=True, help="Comma separated
 cmd.add_argument('--dev-langs', type=str, required=True, help="Comma separated list of languages")
 cmd.add_argument("--model", type=str, required=True, help="Path where to store the model")
 cmd.add_argument("--format", type=str, default="conllu")
-cmd.add_argument("--lr", type=float, default=0.05)
+cmd.add_argument("--lr", type=float, default=0.005)
 cmd.add_argument("--samples", type=int, default=10000, help="Number of samples")
 cmd.add_argument("--epochs", type=int, default=500, help="Number of epochs for training")
 cmd.add_argument("--batch", type=int, default=1, help="Mini-batch size")
@@ -42,14 +38,14 @@ dev_langs = args.dev_langs.split(",")
 if len(train_langs) == 0 or len(dev_langs) == 0:
     raise RuntimeError("No train/dev languages")
 all_langs = set(train_langs + dev_langs)
-print("All langs: ", all_langs, flush=True)
-print("Train langs: ", train_langs, flush=True)
-print("Dev langs: ", dev_langs, flush=True)
+print("All langs: ", all_langs, file=sys.stderr, flush=True)
+print("Train langs: ", train_langs, file=sys.stderr, flush=True)
+print("Dev langs: ", dev_langs, file=sys.stderr, flush=True)
 
-print("Loading vocabulary and embeddings", flush=True)
+print("Loading vocabulary and embeddings", file=sys.stderr, flush=True)
 embeddings_table, word_to_id, id_to_word, unk_idx = load_embeddings(args.embeddings, all_langs)
 
-print("Loading train and dev data", flush=True)
+print("Loading train and dev data", file=sys.stderr, flush=True)
 train_data = read_conllu(args.data, train_langs, "train", word_to_id, unk_idx, device=args.storage_device)
 train_size = len(train_data)
 train_data = KMeansBatchIterator(train_data, args.batch_size, args.batch_clusters, len, shuffle=True)
@@ -91,25 +87,30 @@ def compute_batch_loss(batch):
     # some kind of special loss modules
     # lets split everything by hand
     batch_loss = list()
+    n_worse_than_gold_total = 0.
     for b, l in enumerate(batch_lengths):
         bigram = batch_bigram[b, :l, :l]
         start = batch_start[b, :l]
         end = batch_end[b, :l]
-        loss = loss_builder(bigram, start, end)
+        loss, n_worse_than_gold = loss_builder(bigram, start, end)
         batch_loss.append(loss)
+        n_worse_than_gold_total += n_worse_than_gold
 
-    return torch.sum(loss)
+    return torch.sum(sum(batch_loss)), n_worse_than_gold_total
 
 for epoch in range(args.epochs):
     epoch_start_time = time.time()
     model.train()
     train_loss = 0.
+    train_n_worse = 0.
     for batch in train_data:
         optimizer.zero_grad()
 
-        loss = compute_batch_loss(batch)
+        loss, n_worse = compute_batch_loss(batch)
         train_loss += loss.item()
+        train_n_worse += n_worse.item()
 
+        loss = loss / len(batch)
         loss.backward()
         optimizer.step()
         #scheduler.step()
@@ -126,26 +127,38 @@ for epoch in range(args.epochs):
     # evaluation
     model.eval()
     dev_losses = {}
+    dev_n_worses = {}
     for lang, data in dev_datas.items():
         dev_loss = 0.
+        dev_n_worse = 0.
         dev_denum = 0.
         with torch.no_grad():
             for batch in data:
-                dev_denum += sum(len(s) for s in batch)
-                dev_loss += compute_batch_loss(batch).item()
-        dev_loss = dev_loss / dev_denum
-        dev_losses[lang] = dev_loss
+                dev_denum += len(batch)
+                l, n = compute_batch_loss(batch)
+                dev_loss += l.item()
+                dev_n_worse += n.item()
+        dev_losses[lang] = dev_loss / dev_denum
+        dev_n_worses[lang] = dev_n_worse / (dev_denum * args.samples)
 
     # score_bigram, score_start, score_end = eval.eval(preds, golds)
     print(
-        "Epoch %i:\tTrain loss: %.4f\t\tDev loss: %s\t\tTiming (sec): %i"
+        "Epoch %i:"
+        "\tTrain loss: %.4f"
+        "\t\tTrain acc: %s"
+        "\t\tDev loss: %s"
+        "\t\tDev acc: %s"
+        "\t\tTiming (sec): %i"
         %
         (
             epoch,
             train_loss / train_size,
+            train_n_worse / (train_size * args.samples),
             ", ".join("%s=%.4f" % (lang, loss) for lang, loss in dev_losses.items()),
+            ", ".join("%s=%.4f" % (lang, loss) for lang, loss in dev_n_worses.items()),
             time.time() - epoch_start_time
         ),
+        file=sys.stderr,
         flush=True
     )
 

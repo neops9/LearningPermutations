@@ -72,10 +72,11 @@ class ISLoss(nn.Module):
         # add start and end scores
         # shape: n batch
         w = w.sum(dim=1) + start[samples[:, 0]] + end[samples[:, -1]]
+        n_worse_than_gold = sum(gold_score > w)
 
         if self.reverse:
             log_Z = math.log(math.factorial(n_words)) + math.log(n_words) - (-w).logsumexp(dim=0, keepdim=False)
         else:
             log_Z = math.log(math.factorial(n_words)) - math.log(n_words) + w.logsumexp(dim=0, keepdim=False)
 
-        return -gold_score + log_Z
+        return -gold_score + log_Z, n_worse_than_gold
