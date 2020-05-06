@@ -16,6 +16,44 @@ class RandomSampler(nn.Module):
         rand_perm = rand.argsort(dim=1)
         return rand_perm
 
+class GumbelSampler(nn.Module):
+    def __init__(self, n_samples):
+        super().__init__()
+        self.k = n_samples
+        self.gumbel = torch.distributions.Gumbel(
+            torch.tensor([0.]),
+            torch.tensor([1.])
+        )
+
+    def forward(self, n_words, bigram, start, end):
+        with torch.no_grad():
+            # reshape w. respect to the number of samples
+            start = start.unsqueeze(0).expand(self.k, -1)
+            bigram = bigram.unsqueeze(0).expand(self.k, -1, -1)
+
+            # add gumbel noise
+            start = start + self.gumbel.sample(start.shape).squeeze(-1)
+            bigram = bigram + self.gumbel.sample(bigram.shape).squeeze(-1)
+
+            # matrix where we are going to store all permutation samples
+            rand_perm = torch.empty((self.n_samples, n_words), dtype=torch.long)
+
+            # sample first word
+            pred = start.argmax(dim=1)
+            rand_perm[:, 0] = pred
+
+            # for each sample, the word selected as first word cannot be sampled anymore,
+            # so we set its weight to -inf so it is never selected by argmax
+            arange = torch.arange(n_samples)
+            bigram[arange, :, pred] = float("-inf")
+
+            for index in range(1, n_words):
+                pred = bigram[arange, rand_perm[:, index-1]].argmax(dim=1)
+                rand_perm[:, index] = pred
+                bigram[arange, :, pred] = float("-inf")
+
+            return rand_perm
+
 class Loss(nn.Module):
     def __init__(self, sampler):
         super().__init__()
@@ -54,6 +92,7 @@ class ISLoss(nn.Module):
         super().__init__()
         self.sampler = sampler
         self.reverse = False
+        self.combine = False
 
     def forward(self, bigram, start, end):
         n_words = len(start)
@@ -74,7 +113,11 @@ class ISLoss(nn.Module):
         w = w.sum(dim=1) + start[samples[:, 0]] + end[samples[:, -1]]
         n_worse_than_gold = sum(gold_score > w)
 
-        if self.reverse:
+        if self.combine:
+            log_Z_is = math.log(math.factorial(n_words)) - math.log(n_words) + w.logsumexp(dim=0, keepdim=False)
+            log_Z_ris = math.log(math.factorial(n_words)) + math.log(n_words) - (-w).logsumexp(dim=0, keepdim=False)
+            log_Z = (log_Z_is + log_Z_ris)/2
+        elif self.reverse:
             log_Z = math.log(math.factorial(n_words)) + math.log(n_words) - (-w).logsumexp(dim=0, keepdim=False)
         else:
             log_Z = math.log(math.factorial(n_words)) - math.log(n_words) + w.logsumexp(dim=0, keepdim=False)
