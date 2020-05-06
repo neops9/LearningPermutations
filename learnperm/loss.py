@@ -16,6 +16,44 @@ class RandomSampler(nn.Module):
         rand_perm = rand.argsort(dim=1)
         return rand_perm
 
+class GumbelSampler(nn.Module):
+    def __init__(self, n_samples):
+        super().__init__()
+        self.k = n_samples
+        self.gumbel = torch.distributions.Gumbel(
+            torch.tensor([0.]),
+            torch.tensor([1.])
+        )
+
+    def forward(self, n_words, bigram, start, end):
+        with torch.no_grad():
+            # reshape w. respect to the number of samples
+            start = start.unsqueeze(0).expand(self.k, -1)
+            bigram = bigram.unsqueeze(0).expand(self.k, -1, -1)
+
+            # add gumbel noise
+            start = start + self.gumbel.sample(start.shape).squeeze(-1)
+            bigram = bigram + self.gumbel.sample(bigram.shape).squeeze(-1)
+
+            # matrix where we are going to store all permutation samples
+            rand_perm = torch.empty((self.n_samples, n_words), dtype=torch.long)
+
+            # sample first word
+            pred = start.argmax(dim=1)
+            rand_perm[:, 0] = pred
+
+            # for each sample, the word selected as first word cannot be sampled anymore,
+            # so we set its weight to -inf so it is never selected by argmax
+            arange = torch.arange(n_samples)
+            bigram[arange, :, pred] = float("-inf")
+
+            for index in range(1, n_words):
+                pred = bigram[arange, rand_perm[:, index-1]].argmax(dim=1)
+                rand_perm[:, index] = pred
+                bigram[arange, :, pred] = float("-inf")
+
+            return rand_perm
+
 class Loss(nn.Module):
     def __init__(self, sampler):
         super().__init__()
