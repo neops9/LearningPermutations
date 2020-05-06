@@ -19,7 +19,7 @@ class RandomSampler(nn.Module):
 class GumbelSampler(nn.Module):
     def __init__(self, n_samples):
         super().__init__()
-        self.k = n_samples
+        self.n_samples = n_samples
         self.gumbel = torch.distributions.Gumbel(
             torch.tensor([0.]),
             torch.tensor([1.])
@@ -44,7 +44,7 @@ class GumbelSampler(nn.Module):
 
             # for each sample, the word selected as first word cannot be sampled anymore,
             # so we set its weight to -inf so it is never selected by argmax
-            arange = torch.arange(n_samples)
+            arange = torch.arange(self.n_samples)
             bigram[arange, :, pred] = float("-inf")
 
             for index in range(1, n_words):
@@ -88,11 +88,11 @@ class Loss(nn.Module):
 
 
 class ISLoss(nn.Module):
-    def __init__(self, sampler):
+    def __init__(self, sampler, combine=False, reverse=False):
         super().__init__()
         self.sampler = sampler
-        self.reverse = False
-        self.combine = False
+        self.reverse = reverse
+        self.combine = combine
 
     def forward(self, bigram, start, end):
         n_words = len(start)

@@ -19,7 +19,7 @@ cmd.add_argument("--data", type=str, required=True, help="Path to training data 
 cmd.add_argument('--embeddings', type=str, required=True, help="Path to the embedding folder")
 cmd.add_argument('--train-langs', type=str, required=True, help="Comma separated list of languages")
 cmd.add_argument('--dev-langs', type=str, required=True, help="Comma separated list of languages")
-cmd.add_argument("--model", type=str, required=True, help="Path where to store the model")
+cmd.add_argument("--model", type=str, default="", help="Path where to store the model")
 cmd.add_argument("--format", type=str, default="conllu")
 cmd.add_argument("--lr", type=float, default=0.005)
 cmd.add_argument("--samples", type=int, default=10000, help="Number of samples")
@@ -98,6 +98,9 @@ def compute_batch_loss(batch):
 
     return torch.sum(sum(batch_loss)), n_worse_than_gold_total
 
+best_epoch = 0
+best_score = 0
+
 for epoch in range(args.epochs):
     epoch_start_time = time.time()
     model.train()
@@ -115,14 +118,15 @@ for epoch in range(args.epochs):
         optimizer.step()
         #scheduler.step()
 
-    """
-    save_checkpoint({
-            'args': args,
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'best_score': best_score,
-        }, False, args.model)
-    """
+    if not args.model == "":
+        remove_list = ["feature_extractor.embs.weight"]
+        state_dict = {k: v for k, v in model.state_dict().items() if not k in remove_list} 
+        save_checkpoint({
+                'args': args,
+                'epoch': epoch + 1,
+                'state_dict': state_dict,
+                'best_score': best_score,
+            }, False, args.model)
 
     # evaluation
     model.eval()
@@ -141,7 +145,6 @@ for epoch in range(args.epochs):
         dev_losses[lang] = dev_loss / dev_denum
         dev_n_worses[lang] = dev_n_worse / (dev_denum * args.samples)
 
-    # score_bigram, score_start, score_end = eval.eval(preds, golds)
     print(
         "Epoch %i:"
         "\tTrain loss: %.4f"
@@ -162,17 +165,14 @@ for epoch in range(args.epochs):
         flush=True
     )
 
-    """
-    train_langs is a list of size 1
-    we should eval with the dev lang = train_langs[0]
-    if dev_epoch_w > best_score:
-        best_score = dev_epoch_w
+    if dev_n_worses[train_langs[0]] > best_score:
+        best_score = dev_n_worses[train_langs[0]]
         best_epoch = epoch
-
-        save_checkpoint({
-            'args': args,
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'best_score': best_score,
-        }, True, args.model)
-    """
+     
+        if not args.model == "":
+            save_checkpoint({
+                'args': args,
+                'epoch': epoch + 1,
+                'state_dict': model.state_dict(),
+                'best_score': best_score,
+            }, True, args.model)
