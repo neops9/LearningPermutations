@@ -24,7 +24,6 @@ cmd.add_argument("--format", type=str, default="conllu")
 cmd.add_argument("--lr", type=float, default=0.005)
 cmd.add_argument("--samples", type=int, default=10000, help="Number of samples")
 cmd.add_argument("--epochs", type=int, default=500, help="Number of epochs for training")
-cmd.add_argument("--batch", type=int, default=1, help="Mini-batch size")
 cmd.add_argument('--storage-device', type=str, default="cpu", help="Device to use for data storage")
 cmd.add_argument('--device', type=str, default="cpu", help="Device to use for computation")
 cmd.add_argument('--resume', type=str, default="", help="Resume training from a saved model.")
@@ -33,10 +32,10 @@ cmd.add_argument('--batch-clusters', type=int, default=32, help="Number of clust
 network.Network.add_cmd_options(cmd)
 args = cmd.parse_args()
 
-train_langs = args.train_langs.split(",")
 dev_langs = args.dev_langs.split(",")
-if len(train_langs) == 0 or len(dev_langs) == 0:
-    raise RuntimeError("No train/dev languages")
+train_langs = [args.train_langs]
+if len(dev_langs) == 0:
+    raise RuntimeError("No dev languages")
 all_langs = set(train_langs + dev_langs)
 print("All langs: ", all_langs, file=sys.stderr, flush=True)
 print("Train langs: ", train_langs, file=sys.stderr, flush=True)
@@ -78,6 +77,7 @@ loss_builder.to(args.device)
 def compute_batch_loss(batch):
     batch_lengths = [len(s) for s in batch]
     batch = [s.to(args.device) for s in batch]
+    # shape: (n batch, n words)
     batch = nn.utils.rnn.pad_sequence(batch, batch_first=True, padding_value=unk_idx)
     # bigram shape: (n batch, n words, n words)
     # start and end shape: (n batch, n words)
@@ -163,6 +163,8 @@ for epoch in range(args.epochs):
     )
 
     """
+    train_langs is a list of size 1
+    we should eval with the dev lang = train_langs[0]
     if dev_epoch_w > best_score:
         best_score = dev_epoch_w
         best_epoch = epoch
