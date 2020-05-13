@@ -121,7 +121,6 @@ for epoch in range(args.epochs):
     if not args.model == "":
         remove_list = ["feature_extractor.embs.weight"]
         state_dict = {k: v for k, v in model.state_dict().items() if not k in remove_list} 
-        print(state_dict.keys())
         save_checkpoint({
                 'args': args,
                 'epoch': epoch + 1,
@@ -173,7 +172,6 @@ for epoch in range(args.epochs):
         if not args.model == "":
             remove_list = ["feature_extractor.embs.weight"]
             state_dict = {k: v for k, v in model.state_dict().items() if not k in remove_list} 
-            print(state_dict.keys())
             save_checkpoint({
                 'args': args,
                 'epoch': epoch + 1,
