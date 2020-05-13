@@ -22,6 +22,7 @@ cmd.add_argument('--dev-langs', type=str, required=True, help="Comma separated l
 cmd.add_argument("--model", type=str, default="", help="Path where to store the model")
 cmd.add_argument("--format", type=str, default="conllu")
 cmd.add_argument("--lr", type=float, default=0.005)
+cmd.add_argument("--weight-decay", type=float, default=0.)
 cmd.add_argument("--samples", type=int, default=10000, help="Number of samples")
 cmd.add_argument("--epochs", type=int, default=500, help="Number of epochs for training")
 cmd.add_argument('--storage-device', type=str, default="cpu", help="Device to use for data storage")
@@ -29,6 +30,7 @@ cmd.add_argument('--device', type=str, default="cpu", help="Device to use for co
 cmd.add_argument('--resume', type=str, default="", help="Resume training from a saved model.")
 cmd.add_argument('--batch-size', type=int, default=2500, help="Maximum number of words per batch")
 cmd.add_argument('--batch-clusters', type=int, default=32, help="Number of clusters to use to construct batches")
+cmd.add_argument('--decay-rate', type=float, default=0.96, help="Decay rate of the ExponentialLR scheduler")
 network.Network.add_cmd_options(cmd)
 args = cmd.parse_args()
 
@@ -63,10 +65,12 @@ model = network.Network(args, embeddings_table=embeddings_table, add_unk=True)
 model.to(device=args.device)
 
 # remove the embedding table as it does not require a gradient
-optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.weight_decay)
+#optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
 
-#steps_per_epoch = len(list(range(0, len(train_data), 1)))
+#steps_per_epoch = 32
 #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10 * steps_per_epoch, gamma=0.1)
+scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.decay_rate)
 
 #loss_builder = torch.nn.BCEWithLogitsLoss()
 
@@ -116,11 +120,11 @@ for epoch in range(args.epochs):
         loss = loss / len(batch)
         loss.backward()
         optimizer.step()
-        #scheduler.step()
+        scheduler.step()
 
     if not args.model == "":
         remove_list = ["feature_extractor.embs.weight"]
-        state_dict = {k: v for k, v in model.state_dict().items() if not k in remove_list} 
+        state_dict = {k: v for k, v in model.state_dict().items() if not k in remove_list}
         save_checkpoint({
                 'args': args,
                 'epoch': epoch + 1,
@@ -153,7 +157,7 @@ for epoch in range(args.epochs):
         "\t\tDev acc: %s"
         "\t\tTiming (sec): %i"
         %
-        (
+	(
             epoch,
             train_loss / train_size,
             train_n_worse / (train_size * args.samples),
@@ -161,17 +165,17 @@ for epoch in range(args.epochs):
             ", ".join("%s=%.4f" % (lang, loss) for lang, loss in dev_n_worses.items()),
             time.time() - epoch_start_time
         ),
-        file=sys.stderr,
+	file=sys.stderr,
         flush=True
     )
 
     if dev_n_worses[train_langs[0]] > best_score:
         best_score = dev_n_worses[train_langs[0]]
         best_epoch = epoch
-     
+
         if not args.model == "":
             remove_list = ["feature_extractor.embs.weight"]
-            state_dict = {k: v for k, v in model.state_dict().items() if not k in remove_list} 
+            state_dict = {k: v for k, v in model.state_dict().items() if not k in remove_list}
             save_checkpoint({
                 'args': args,
                 'epoch': epoch + 1,
