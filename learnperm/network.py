@@ -48,28 +48,32 @@ class FastText(torch.nn.Module):
         return self.embs(sentence)
 
 
+
 class PermutationModule(nn.Module):
-    def __init__(self, args, input_dim, dropout=0.):
+    def __init__(self, args, input_dim, input_dropout=0., proj_dropout=0.):
         super(PermutationModule, self).__init__()
 
-        self.input_dropout = SequenceDropout(p=dropout, broadcast_time=True, broadcast_batch=False)
-        self.proj_dropout = SequenceDropout(p=dropout, broadcast_time=True, broadcast_batch=False)
+        self.input_dropout = SequenceDropout(p=input_dropout, broadcast_time=True, broadcast_batch=False)
+        self.proj_dropout = SequenceDropout(p=proj_dropout, broadcast_time=True, broadcast_batch=False)
 
         self.bigram_left_proj = nn.Linear(input_dim, args.proj_dim, bias=True)
         self.bigram_right_proj = nn.Linear(input_dim, args.proj_dim, bias=False)  # bias will be added bu the left proj
         self.bigram_activation = nn.ReLU()
         self.bigram_output_proj = nn.Linear(args.proj_dim, 1, bias=True)
 
+        self.left_layer_norm = nn.LayerNorm(args.proj_dim)
+        self.right_layer_norm = nn.LayerNorm(args.proj_dim)
+
         self.start_builder = nn.Sequential(
             nn.Linear(input_dim, args.proj_dim, bias=True),
             nn.ReLU(),
-            SequenceDropout(p=dropout, broadcast_time=True, broadcast_batch=False),
+            SequenceDropout(p=proj_dropout, broadcast_time=True, broadcast_batch=False),
             nn.Linear(args.proj_dim, 1, bias=True)
         )
         self.end_builder = nn.Sequential(
             nn.Linear(input_dim, args.proj_dim, bias=True),
             nn.ReLU(),
-            SequenceDropout(p=dropout, broadcast_time=True, broadcast_batch=False),
+            SequenceDropout(p=proj_dropout, broadcast_time=True, broadcast_batch=False),
             nn.Linear(args.proj_dim, 1, bias=True)
         )
 
@@ -110,7 +114,7 @@ class Network(nn.Module):
     def __init__(self, args, embeddings_table, add_unk):
         super(Network, self).__init__()
         self.feature_extractor = FastText(embeddings_table, add_unk)
-        self.permutation = PermutationModule(args, 300)
+        self.permutation = PermutationModule(args, 300, input_dropout=args.input_dropout, proj_dropout=args.proj_dropout)
 
     def forward(self, input):
         # input must be of shape: (batch, n words)
@@ -122,3 +126,5 @@ class Network(nn.Module):
     def add_cmd_options(cmd):
         cmd.add_argument('--proj-dim', type=int, default=128, help="Dimension of the output projection")
         cmd.add_argument('--activation', type=str, default="tanh", help="activation to use in weightning modules: tanh, relu, leaky_relu")
+        cmd.add_argument('--input-dropout', type=float, default=0., help="Dropout for the input")
+        cmd.add_argument('--proj-dropout', type=float, default=0., help="Dropout for the proj")
