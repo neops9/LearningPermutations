@@ -39,7 +39,7 @@ test_data = read_conllu(args.data, test_langs, "test", word_to_id, unk_idx, devi
 test_size = len(test_data)
 
 print("Loading model", flush=True)
-checkpoint = torch.load(args.model)
+checkpoint = torch.load(args.model, map_location='cpu')
 model = network.Network(checkpoint['args'], embeddings_table=embeddings_table, add_unk=True)
 model_state = model.state_dict()
 model_state.update(checkpoint['state_dict'])
@@ -55,7 +55,7 @@ output_filename = "temp_output"
 
 infile = open(input_filename, 'w')
 
-for sentence in test_data:
+for i, sentence in enumerate(test_data):
     n_words = len(sentence)
     batch_bigram, batch_start, batch_end = model(sentence.unsqueeze(0))
 
@@ -86,16 +86,19 @@ proc = subprocess.Popen(cmd).wait()
 def build_conll(path, orders):
     data = conll.read(path, "conllu")
 
-    for sentence, order in zip(data, orders):
-        if len(sentence["tokens"]) < 2 or not (len(sentence["tokens"]) == len(order)):
+    i = 0
+    for sentence in data:
+        if len(sentence["tokens"]) < 2:
             continue
 
+        order = orders[i]
         order = order.split()
         new_sentence = sentence.copy()
+        i += 1
 
         for new_token, token in zip(new_sentence["tokens"], sentence["tokens"]):
-            if token["head"] > 0 and str(token["head"] - 1) in order:
-                    new_token["head"] = order.index(str(token["head"] - 1)) + 1
+            if token["head"] > 0:
+                new_token["head"] = order.index(str(token["head"] - 1)) + 1
 
         new_sentence["tokens"] = [sentence["tokens"][int(i)] for i in order]
         yield new_sentence
