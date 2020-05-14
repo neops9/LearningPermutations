@@ -39,7 +39,7 @@ test_data = read_conllu(args.data, test_langs, "test", word_to_id, unk_idx, devi
 test_size = len(test_data)
 
 print("Loading model", flush=True)
-checkpoint = torch.load(args.model, map_location='cpu')
+checkpoint = torch.load(args.model, map_location=args.device)
 model = network.Network(checkpoint['args'], embeddings_table=embeddings_table, add_unk=True)
 model_state = model.state_dict()
 model_state.update(checkpoint['state_dict'])
