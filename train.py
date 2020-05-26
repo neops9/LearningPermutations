@@ -52,7 +52,7 @@ tags_dict = build_tags_dictionnary(os.path.join(args.data, train_langs[0], "trai
 print("Loading train and dev data", file=sys.stderr, flush=True)
 train_data = read_conllu(args.data, train_langs, "train", word_to_id, unk_idx, tags_dict, device=args.storage_device)
 train_size = len(train_data)
-#print(train_data)
+
 train_data = KMeansBatchIterator(train_data, args.batch_size, args.batch_clusters, len, shuffle=True)
 # for dev, we separate each language so we can report score per language
 dev_datas = {
@@ -75,21 +75,14 @@ optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters(
 #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10 * steps_per_epoch, gamma=0.1)
 scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.decay_rate)
 
-#loss_builder = torch.nn.BCEWithLogitsLoss()
-
 sampler = loss.RandomSampler(args.samples)
 loss_builder = loss.ISLoss(sampler)
 loss_builder.to(args.device)
 
 def compute_batch_loss(batch):
     batch_lengths = [len(s["tokens"]) for s in batch]
-    batch = [s for s in batch]
-    
-    #print("-------------------------------")
-    #for s in batch:
-    #    print(s)
-    # shape: (n batch, n words)
-    # batch = nn.utils.rnn.pad_sequence(batch, batch_first=True, padding_value=unk_idx)
+    batch = [s for s in batch]    
+
     # bigram shape: (n batch, n words, n words)
     # start and end shape: (n batch, n words)
     batch_bigram, batch_start, batch_end = model(batch)
@@ -107,7 +100,6 @@ def compute_batch_loss(batch):
         batch_loss.append(loss)
         n_worse_than_gold_total += n_worse_than_gold
 
-    #print("ABCD : ", torch.sum(sum(batch_loss)))
     return torch.sum(sum(batch_loss)), n_worse_than_gold_total
 
 best_epoch = 0
@@ -120,7 +112,6 @@ for epoch in range(args.epochs):
     train_n_worse = 0.
     for batch in train_data:
         optimizer.zero_grad()
-
         loss, n_worse = compute_batch_loss(batch)
         train_loss += loss.item()
         train_n_worse += n_worse.item()

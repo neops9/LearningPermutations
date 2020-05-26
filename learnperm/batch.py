@@ -65,7 +65,7 @@ class CustomSizeBatchIterator:
 
 class KMeansBatchIterator:
     def __init__(self, data, batch_size, n_clusters, size_getter, shuffle=False):
-        data_sizes = np.array([size_getter(data[i]) for i in range(len(data))])
+        data_sizes = np.array([size_getter(data[i]["tokens"]) for i in range(len(data))])
         kmeans = KMeans(n_clusters=n_clusters, init="k-means++").fit(data_sizes.reshape(-1, 1))
 
         self.clusters = {k: list() for k in range(n_clusters)}
