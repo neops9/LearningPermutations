@@ -23,15 +23,25 @@ def load_embeddings(dir, langs):
     return data, word_to_id, id_to_word, n_embs
 
 
-def read_conllu(dir, langs, section, word_to_id, unk_idx, min_length=2, device="cpu"):
+def read_conllu(dir, langs, section, word_to_id, unk_idx, tags_dict, min_length=2, device="cpu"):
     ret = list()
     for lang in langs:
         path = os.path.join(dir, lang, section + ".conllu")
         data = conll.read(path, "conllu")
         for sentence in data:
             words = [w["form"] for w in sentence["tokens"]]
+            tags = [w["upos"] for w in sentence["tokens"]]
+            in_data = dict()
+
             if len(words) >= min_length:
-                words_tensor = torch.LongTensor([word_to_id[lang].get(w.lower(), unk_idx) for w  in words])
+                words_tensor = torch.LongTensor([word_to_id[lang].get(w.lower(), unk_idx) for w in words])
                 words_tensor = words_tensor.to(device)
-                ret.append(words_tensor)
+                in_data["tokens"] = words_tensor
+
+                tags_tensor = torch.LongTensor([tags_dict.word_to_id(t) for t in tags])
+                tags_tensor = tags_tensor.to(device)
+                in_data["tags"] = tags_tensor
+
+                ret.append(in_data)
+
     return ret

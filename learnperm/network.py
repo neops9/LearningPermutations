@@ -30,12 +30,12 @@ class SequenceDropout(nn.Module):
         return x
 
 class FastText(torch.nn.Module):
-    def __init__(self, embedding_table, add_unk):
+    def __init__(self, embedding_table, add_unk, padding_idx):
         super().__init__()
         n_embs = len(embedding_table)
         if add_unk:
             n_embs += 1
-        self.embs = nn.Embedding(n_embs, 300)
+        self.embs = nn.Embedding(n_embs, 300, padding_idx=padding_idx)
         self.embs.weight.requires_grad=False
 
         with torch.no_grad():
@@ -46,8 +46,76 @@ class FastText(torch.nn.Module):
 
     def forward(self, sentence):
         return self.embs(sentence)
+        
+class FeatureExtractionModule(nn.Module):
+    def __init__(self, args, embeddings_table, add_unk, word_padding_idx, pos_padding_idx=0, n_tags=0):
+        super(FeatureExtractionModule, self).__init__()
+        self.output_dim = 0
 
+        if args.pos_embs:
+            if n_tags <= 0:
+                raise RuntimeError("Number of tags is not set!")
 
+            self.pos_embs = nn.Embedding(n_tags + 1, args.pos_embs_dim, padding_idx=pos_padding_idx).to(args.device)
+            self.output_dim += args.pos_embs_dim
+        else:
+            self.pos_embs = None
+
+        if args.word_embs:
+            self.word_embs = FastText(embeddings_table, add_unk, word_padding_idx)
+            self.output_dim += args.word_embs_dim
+        else:
+            self.word_embs = None
+
+        if self.output_dim == 0:
+            raise RuntimeError("No input features set!")
+
+        self.initialize_parameters()
+
+    def initialize_parameters(self):
+        with torch.no_grad():
+            if self.pos_embs is not None:
+                nn.init.uniform_(self.pos_embs.weight, -0.01, 0.01)
+
+    @staticmethod
+    def add_cmd_options(cmd):
+        cmd.add_argument('--pos-embs', action="store_true", help="Use POS embeddings")
+        cmd.add_argument('--pos-embs-dim', type=int, default=50, help="Dimension of the POS embs")
+        cmd.add_argument('--word-embs', action="store_true", help="Use word embeddings")
+        cmd.add_argument('--word-embs-dim', type=int, default=300, help="Dimension of the word embs (FastText = 300)")
+
+    def forward(self, inputs):
+        repr_list = []
+        #repr_list.append(self.fasttext(sentence["tokens"]).to(args.device))
+        
+        if self.word_embs is not None: 
+            batch_words = [sentence["tokens"].to(self.word_embs.embs.weight.device) for sentence in inputs]
+            padded_inputs = torch.nn.utils.rnn.pad_sequence(
+                    batch_words,
+                    batch_first=True,
+                    padding_value=self.word_embs.embs.padding_idx
+                )
+
+            repr_list.append(self.word_embs(padded_inputs))
+
+        if self.pos_embs is not None:
+            padded_inputs = torch.nn.utils.rnn.pad_sequence(
+                [sentence["tags"].to(self.pos_embs.weight.device) for sentence in inputs],
+                batch_first=True,
+                padding_value=self.pos_embs.padding_idx
+            )
+            repr_list.append(self.pos_embs(padded_inputs))
+
+            #pos_tags = sentence["tags"].to(self.pos_embs.weight.device)
+            #repr_list.append(self.pos_embs(pos_tags))
+
+        # combine word representations
+        if len(repr_list) == 1:
+            token_repr = repr_list[0]
+        else:
+            token_repr = torch.cat(repr_list, 2)
+
+        return token_repr
 
 class PermutationModule(nn.Module):
     def __init__(self, args, input_dim, input_dropout=0., proj_dropout=0.):
@@ -111,10 +179,10 @@ class PermutationModule(nn.Module):
 
 
 class Network(nn.Module):
-    def __init__(self, args, embeddings_table, add_unk):
+    def __init__(self, args, embeddings_table, add_unk, word_padding_idx, pos_padding_idx, n_tags):
         super(Network, self).__init__()
-        self.feature_extractor = FastText(embeddings_table, add_unk)
-        self.permutation = PermutationModule(args, 300, input_dropout=args.input_dropout, proj_dropout=args.proj_dropout)
+        self.feature_extractor = FeatureExtractionModule(args, embeddings_table, add_unk, word_padding_idx, pos_padding_idx, n_tags=n_tags)
+        self.permutation = PermutationModule(args, self.feature_extractor.output_dim, input_dropout=args.input_dropout, proj_dropout=args.proj_dropout)
 
     def forward(self, input):
         # input must be of shape: (batch, n words)
@@ -124,6 +192,8 @@ class Network(nn.Module):
 
     @staticmethod
     def add_cmd_options(cmd):
+        FeatureExtractionModule.add_cmd_options(cmd)
+
         cmd.add_argument('--proj-dim', type=int, default=128, help="Dimension of the output projection")
         cmd.add_argument('--activation', type=str, default="tanh", help="activation to use in weightning modules: tanh, relu, leaky_relu")
         cmd.add_argument('--input-dropout', type=float, default=0., help="Dropout for the input")

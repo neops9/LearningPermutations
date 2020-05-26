@@ -2,11 +2,13 @@ import argparse
 import shutil
 import torch
 import sys
+import os
 from learnperm import loss, network
 import time
 import torch.nn as nn
 from learnperm.data import load_embeddings, read_conllu
 from learnperm.batch import KMeansBatchIterator
+from learnperm.dict import build_tags_dictionnary
 
 def save_checkpoint(state, is_best, path, filename='checkpoint.pth.tar'):
     torch.save(state, path + filename)
@@ -45,15 +47,16 @@ print("Dev langs: ", dev_langs, file=sys.stderr, flush=True)
 
 print("Loading vocabulary and embeddings", file=sys.stderr, flush=True)
 embeddings_table, word_to_id, id_to_word, unk_idx = load_embeddings(args.embeddings, all_langs)
+tags_dict = build_tags_dictionnary(os.path.join(args.data, train_langs[0], "train.conllu"))
 
 print("Loading train and dev data", file=sys.stderr, flush=True)
-train_data = read_conllu(args.data, train_langs, "train", word_to_id, unk_idx, device=args.storage_device)
+train_data = read_conllu(args.data, train_langs, "train", word_to_id, unk_idx, tags_dict, device=args.storage_device)
 train_size = len(train_data)
+#print(train_data)
 train_data = KMeansBatchIterator(train_data, args.batch_size, args.batch_clusters, len, shuffle=True)
-
 # for dev, we separate each language so we can report score per language
 dev_datas = {
-    lang: read_conllu(args.data, [lang], "dev", word_to_id, unk_idx, device=args.storage_device)
+    lang: read_conllu(args.data, [lang], "dev", word_to_id, unk_idx, tags_dict, device=args.storage_device)
     for lang in dev_langs
 }
 dev_datas = {
@@ -61,7 +64,7 @@ dev_datas = {
     for lang, data in dev_datas.items()
 }
 
-model = network.Network(args, embeddings_table=embeddings_table, add_unk=True)
+model = network.Network(args, embeddings_table=embeddings_table, add_unk=True, word_padding_idx=unk_idx, pos_padding_idx=tags_dict.pad_index, n_tags=len(tags_dict._word_to_id.keys()))
 model.to(device=args.device)
 
 # remove the embedding table as it does not require a gradient
@@ -79,10 +82,14 @@ loss_builder = loss.ISLoss(sampler)
 loss_builder.to(args.device)
 
 def compute_batch_loss(batch):
-    batch_lengths = [len(s) for s in batch]
-    batch = [s.to(args.device) for s in batch]
+    batch_lengths = [len(s["tokens"]) for s in batch]
+    batch = [s for s in batch]
+    
+    #print("-------------------------------")
+    #for s in batch:
+    #    print(s)
     # shape: (n batch, n words)
-    batch = nn.utils.rnn.pad_sequence(batch, batch_first=True, padding_value=unk_idx)
+    # batch = nn.utils.rnn.pad_sequence(batch, batch_first=True, padding_value=unk_idx)
     # bigram shape: (n batch, n words, n words)
     # start and end shape: (n batch, n words)
     batch_bigram, batch_start, batch_end = model(batch)
@@ -100,6 +107,7 @@ def compute_batch_loss(batch):
         batch_loss.append(loss)
         n_worse_than_gold_total += n_worse_than_gold
 
+    #print("ABCD : ", torch.sum(sum(batch_loss)))
     return torch.sum(sum(batch_loss)), n_worse_than_gold_total
 
 best_epoch = 0
@@ -123,13 +131,14 @@ for epoch in range(args.epochs):
         scheduler.step()
 
     if not args.model == "":
-        remove_list = ["feature_extractor.embs.weight"]
+        remove_list = ["feature_extractor.word_embs.embs.weight"]
         state_dict = {k: v for k, v in model.state_dict().items() if not k in remove_list}
         save_checkpoint({
                 'args': args,
                 'epoch': epoch + 1,
                 'state_dict': state_dict,
                 'best_score': best_score,
+                'tags_dict': tags_dict,
             }, False, args.model)
 
     # evaluation
@@ -174,11 +183,12 @@ for epoch in range(args.epochs):
         best_epoch = epoch
 
         if not args.model == "":
-            remove_list = ["feature_extractor.embs.weight"]
+            remove_list = ["feature_extractor.word_embs.embs.weight"]
             state_dict = {k: v for k, v in model.state_dict().items() if not k in remove_list}
             save_checkpoint({
                 'args': args,
                 'epoch': epoch + 1,
                 'state_dict': state_dict,
                 'best_score': best_score,
+                'tags_dict': tags_dict,
             }, True, args.model)
