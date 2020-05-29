@@ -2,6 +2,7 @@ import math
 import torch.nn as nn
 import torch
 import numpy as np
+import learnperm.special_tokens
 
 class SequenceDropout(nn.Module):
     def __init__(self, p, broadcast_batch=False, broadcast_time=False):
@@ -29,24 +30,67 @@ class SequenceDropout(nn.Module):
 
         return x
 
+
+class SpecialEmbeddingsNetwork(nn.Module):
+    def __init__(self, size):
+        super(SpecialEmbeddingsNetwork, self).__init__()
+        self.size = size
+
+        self.dict = learnperm.special_tokens.Dict()
+        self.embs = nn.Embedding(len(self.dict) + 1, self.size, padding_idx=len(self.dict)) 
+
+        print("Special word embeddings")
+        print("\tsize: %i" % size)
+        print(flush=True)
+
+    def forward(self, inputs):
+        values = self.embs(inputs)
+
+        # masks
+        padding_mask = (inputs != len(self.dict)).float().unsqueeze(-1).expand((inputs.shape[0], inputs.shape[1], 300))
+        values = values * padding_mask
+        special_words_mask = (inputs != 0.).float().float().unsqueeze(-1).expand((inputs.shape[0], inputs.shape[1], 300))
+        return values * special_words_mask
+
 class FastText(torch.nn.Module):
-    def __init__(self, embedding_table, add_unk, padding_idx):
+    def __init__(self, embedding_table, add_unk, word_padding_idx):
         super().__init__()
         n_embs = len(embedding_table)
+
         if add_unk:
             n_embs += 1
-        self.embs = nn.Embedding(n_embs, 300, padding_idx=padding_idx)
+            n_embs += len(learnperm.special_tokens.Dict())
+            
+        self.embs = nn.Embedding(n_embs, 300, padding_idx=word_padding_idx)
         self.embs.weight.requires_grad=False
+        self.special_embs = SpecialEmbeddingsNetwork(300)
+        self.n_unk = len(learnperm.special_tokens.Dict())
 
         with torch.no_grad():
             for i, v in enumerate(embedding_table):
                 self.embs.weight[i, :] = torch.tensor(v)
             if add_unk:
-                self.embs.weight[-1, :].zero_()
+                self.embs.weight[-self.n_unk, :].zero_()
 
-    def forward(self, sentence):
-        return self.embs(sentence)
-        
+    def forward(self, inputs):
+        batch_words = [sentence["tokens"].to(self.embs.weight.device) for sentence in inputs]
+        batch_specials = [sentence["special_words"].to(self.special_embs.embs.weight.device) for sentence in inputs]
+
+        padded_words = torch.nn.utils.rnn.pad_sequence(
+                batch_words,
+                batch_first=True,
+                padding_value=self.embs.padding_idx
+            )
+
+        padded_specials = torch.nn.utils.rnn.pad_sequence(
+                batch_specials,
+                batch_first=True,
+                padding_value=self.special_embs.embs.padding_idx
+            )
+
+        return self.embs(padded_words) + self.special_embs(padded_specials)
+
+
 class FeatureExtractionModule(nn.Module):
     def __init__(self, args, embeddings_table, add_unk, word_padding_idx, pos_padding_idx=0, n_tags=0):
         super(FeatureExtractionModule, self).__init__()
@@ -86,17 +130,9 @@ class FeatureExtractionModule(nn.Module):
 
     def forward(self, inputs):
         repr_list = []
-        #repr_list.append(self.fasttext(sentence["tokens"]).to(args.device))
         
         if self.word_embs is not None: 
-            batch_words = [sentence["tokens"].to(self.word_embs.embs.weight.device) for sentence in inputs]
-            padded_inputs = torch.nn.utils.rnn.pad_sequence(
-                    batch_words,
-                    batch_first=True,
-                    padding_value=self.word_embs.embs.padding_idx
-                )
-
-            repr_list.append(self.word_embs(padded_inputs))
+            repr_list.append(self.word_embs(inputs))
 
         if self.pos_embs is not None:
             padded_inputs = torch.nn.utils.rnn.pad_sequence(
@@ -106,9 +142,6 @@ class FeatureExtractionModule(nn.Module):
             )
             repr_list.append(self.pos_embs(padded_inputs))
 
-            #pos_tags = sentence["tags"].to(self.pos_embs.weight.device)
-            #repr_list.append(self.pos_embs(pos_tags))
-
         # combine word representations
         if len(repr_list) == 1:
             token_repr = repr_list[0]
@@ -116,6 +149,7 @@ class FeatureExtractionModule(nn.Module):
             token_repr = torch.cat(repr_list, 2)
 
         return token_repr
+
 
 class PermutationModule(nn.Module):
     def __init__(self, args, input_dim, input_dropout=0., proj_dropout=0.):
