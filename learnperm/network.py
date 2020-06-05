@@ -159,7 +159,15 @@ class PermutationModule(nn.Module):
         self.proj_dropout = SequenceDropout(p=proj_dropout, broadcast_time=True, broadcast_batch=False)
 
         self.bigram_left_proj = nn.Linear(input_dim, args.proj_dim, bias=True)
-        self.bigram_right_proj = nn.Linear(input_dim, args.proj_dim, bias=False)  # bias will be added bu the left proj
+        self.bigram_right_proj = nn.Linear(input_dim, args.proj_dim, bias=False)  # bias will be added by the left proj
+
+        if args.add_context:
+            self.bigram_deep_right_proj = nn.Linear(input_dim, args.proj_dim, bias=False)
+            self.bigram_deep_left_proj = nn.Linear(input_dim, args.proj_dim, bias=False)
+        else:
+            self.bigram_deep_right_proj = None
+            self.bigram_deep_left_proj = None
+        
         self.bigram_activation = nn.ReLU()
         self.bigram_output_proj = nn.Linear(args.proj_dim, 1, bias=True)
 
@@ -203,6 +211,10 @@ class PermutationModule(nn.Module):
         left_proj = self.bigram_left_proj(input)
         right_proj = self.bigram_right_proj(input)
 
+        if self.bigram_deep_left_proj != None and self.bigram_left_proj != None:
+            left_proj += self.bigram_deep_left_proj(input)
+            right_proj += self.bigram_left_proj(input)
+
         # shape: (n batch, n words, n words, proj dim)
         proj = left_proj.unsqueeze(1) + right_proj.unsqueeze(2)
         proj = self.bigram_activation(proj)
@@ -232,3 +244,4 @@ class Network(nn.Module):
         cmd.add_argument('--activation', type=str, default="tanh", help="activation to use in weightning modules: tanh, relu, leaky_relu")
         cmd.add_argument('--input-dropout', type=float, default=0., help="Dropout for the input")
         cmd.add_argument('--proj-dropout', type=float, default=0., help="Dropout for the proj")
+        cmd.add_argument('--add-context', action="store_true", help="Add left and right context")
