@@ -111,6 +111,17 @@ class FeatureExtractionModule(nn.Module):
         else:
             self.word_embs = None
 
+        if args.lstm:
+            self.lstm = nn.LSTM(
+                    args.word_embs_dim,
+                    args.lstm_dim,
+                    bidirectional=True,
+                    batch_first=True
+                )
+            self.output_dim += args.lstm_dim * 2
+        else:
+            self.lstm = None
+
         if self.output_dim == 0:
             raise RuntimeError("No input features set!")
 
@@ -127,13 +138,20 @@ class FeatureExtractionModule(nn.Module):
         cmd.add_argument('--pos-embs-dim', type=int, default=50, help="Dimension of the POS embs")
         cmd.add_argument('--word-embs', action="store_true", help="Use word embeddings")
         cmd.add_argument('--word-embs-dim', type=int, default=300, help="Dimension of the word embs (FastText = 300)")
+        cmd.add_argument('--lstm', action="store_true", help="Use word embeddings")
+        cmd.add_argument('--lstm-dim', type=int, default=200, help="Dimension of the LSTM")
 
     def forward(self, inputs):
         repr_list = []
         
-        if self.word_embs is not None: 
-            repr_list.append(self.word_embs(inputs))
+        if self.word_embs is not None:
+            ret = self.word_embs(inputs)
+            repr_list.append(ret)
 
+            if self.lstm is not None:
+                lstm_ret, _ = self.lstm(ret)
+                repr_list.append(lstm_ret)
+                
         if self.pos_embs is not None:
             padded_inputs = torch.nn.utils.rnn.pad_sequence(
                 [sentence["tags"].to(self.pos_embs.weight.device) for sentence in inputs],
