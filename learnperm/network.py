@@ -88,10 +88,10 @@ class FastText(torch.nn.Module):
             batch_specials_right = []
 
             for sentence in inputs:
-                l_t = sentence["tokens"].clone()
-                r_t = sentence["tokens"].clone()
-                l_s = sentence["special_words"].clone()
-                r_s = sentence["special_words"].clone()
+                l_t = sentence["tokens"].clone().to(self.embs.weight.device)
+                r_t = sentence["tokens"].clone().to(self.embs.weight.device)
+                l_s = sentence["special_words"].clone().to(self.embs.weight.device)
+                r_s = sentence["special_words"].clone().to(self.embs.weight.device)
                 for i in range(1, len(l_t)):
                     l_t[i] = sentence["tokens"][i-1]
                     l_s[i] = sentence["special_words"][i-1]
