@@ -53,7 +53,7 @@ class SpecialEmbeddingsNetwork(nn.Module):
         return values * special_words_mask
 
 class FastText(torch.nn.Module):
-    def __init__(self, embedding_table, add_unk, word_padding_idx):
+    def __init__(self, args, embedding_table, add_unk, word_padding_idx):
         super().__init__()
         n_embs = len(embedding_table)
 
@@ -65,6 +65,11 @@ class FastText(torch.nn.Module):
         self.embs.weight.requires_grad=False
         self.special_embs = SpecialEmbeddingsNetwork(300)
         self.n_unk = len(learnperm.special_tokens.Dict())
+        self.add_context = args.add_context
+        self.output_dim = args.word_embs_dim
+
+        if self.add_context:
+            self.output_dim += args.word_embs_dim * 2
 
         with torch.no_grad():
             for i, v in enumerate(embedding_table):
@@ -75,6 +80,28 @@ class FastText(torch.nn.Module):
     def forward(self, inputs):
         batch_words = [sentence["tokens"].to(self.embs.weight.device) for sentence in inputs]
         batch_specials = [sentence["special_words"].to(self.special_embs.embs.weight.device) for sentence in inputs]
+
+        if self.add_context:
+            batch_words_left = []
+            batch_words_right = []
+            batch_specials_left = []
+            batch_specials_right = []
+
+            for sentence in inputs:
+                l_t = sentence["tokens"].clone()
+                r_t = sentence["tokens"].clone()
+                l_s = sentence["special_words"].clone()
+                r_s = sentence["special_words"].clone()
+                for i in range(1, len(l_t)):
+                    l_t[i] = sentence["tokens"][i-1]
+                    l_s[i] = sentence["special_words"][i-1]
+                batch_words_left.append(l_t)
+                batch_specials_left.append(l_s)
+                for i in range(len(r_t)-1):
+                    r_t[i] = sentence["tokens"][i+1]
+                    r_s[i] = sentence["special_words"][i+1]
+                batch_words_right.append(r_t)
+                batch_specials_right.append(r_s)
 
         padded_words = torch.nn.utils.rnn.pad_sequence(
                 batch_words,
@@ -88,7 +115,43 @@ class FastText(torch.nn.Module):
                 padding_value=self.special_embs.embs.padding_idx
             )
 
-        return self.embs(padded_words) + self.special_embs(padded_specials)
+        repr_list = [self.embs(padded_words) + self.special_embs(padded_specials)]
+
+        if self.add_context:
+            padded_words_left = torch.nn.utils.rnn.pad_sequence(
+                    batch_words_left,
+                    batch_first=True,
+                    padding_value=self.embs.padding_idx
+                )
+
+            padded_specials_left = torch.nn.utils.rnn.pad_sequence(
+                    batch_specials_left,
+                    batch_first=True,
+                    padding_value=self.special_embs.embs.padding_idx
+                )
+
+            repr_list.append(self.embs(padded_words_left) + self.special_embs(padded_specials_left))
+
+            padded_words_right = torch.nn.utils.rnn.pad_sequence(
+                    batch_words_right,
+                    batch_first=True,
+                    padding_value=self.embs.padding_idx
+                )
+
+            padded_specials_right = torch.nn.utils.rnn.pad_sequence(
+                    batch_specials_right,
+                    batch_first=True,
+                    padding_value=self.special_embs.embs.padding_idx
+                )
+
+            repr_list.append(self.embs(padded_words_right) + self.special_embs(padded_specials_right))
+
+        if len(repr_list) == 1:
+            ret = repr_list[0]
+        else:
+            ret = torch.cat(repr_list, 2)
+
+        return ret
 
 
 class FeatureExtractionModule(nn.Module):
@@ -106,8 +169,8 @@ class FeatureExtractionModule(nn.Module):
             self.pos_embs = None
 
         if args.word_embs:
-            self.word_embs = FastText(embeddings_table, add_unk, word_padding_idx)
-            self.output_dim += args.word_embs_dim
+            self.word_embs = FastText(args, embeddings_table, add_unk, word_padding_idx)
+            self.output_dim += self.word_embs.output_dim
         else:
             self.word_embs = None
 
@@ -178,13 +241,6 @@ class PermutationModule(nn.Module):
 
         self.bigram_left_proj = nn.Linear(input_dim, args.proj_dim, bias=True)
         self.bigram_right_proj = nn.Linear(input_dim, args.proj_dim, bias=False)  # bias will be added by the left proj
-
-        if args.add_context:
-            self.bigram_deep_right_proj = nn.Linear(input_dim, args.proj_dim, bias=False)
-            self.bigram_deep_left_proj = nn.Linear(input_dim, args.proj_dim, bias=False)
-        else:
-            self.bigram_deep_right_proj = None
-            self.bigram_deep_left_proj = None
         
         self.bigram_activation = nn.ReLU()
         self.bigram_output_proj = nn.Linear(args.proj_dim, 1, bias=True)
@@ -228,10 +284,6 @@ class PermutationModule(nn.Module):
         # shape: (n batch, n words, proj dim)
         left_proj = self.bigram_left_proj(input)
         right_proj = self.bigram_right_proj(input)
-
-        if self.bigram_deep_left_proj != None and self.bigram_left_proj != None:
-            left_proj += self.bigram_deep_left_proj(input)
-            right_proj += self.bigram_left_proj(input)
 
         # shape: (n batch, n words, n words, proj dim)
         proj = left_proj.unsqueeze(1) + right_proj.unsqueeze(2)
