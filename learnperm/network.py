@@ -69,7 +69,7 @@ class FastText(torch.nn.Module):
         self.output_dim = args.word_embs_dim
 
         if self.add_context:
-            self.output_dim += args.word_embs_dim * 2
+            self.output_dim += args.word_embs_dim
 
         with torch.no_grad():
             for i, v in enumerate(embedding_table):
@@ -144,7 +144,7 @@ class FastText(torch.nn.Module):
                     padding_value=self.special_embs.embs.padding_idx
                 )
 
-            repr_list.append(self.embs(padded_words_right) + self.special_embs(padded_specials_right))
+            #repr_list.append(self.embs(padded_words_right) + self.special_embs(padded_specials_right))
 
         if len(repr_list) == 1:
             ret = repr_list[0]
