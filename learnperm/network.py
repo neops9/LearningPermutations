@@ -115,10 +115,10 @@ class FeatureExtractionModule(nn.Module):
             self.lstm = nn.LSTM(
                     args.word_embs_dim,
                     args.lstm_dim,
-                    bidirectional=True,
+                    bidirectional=False,
                     batch_first=True
                 )
-            self.output_dim += args.lstm_dim * 2
+            self.output_dim += args.lstm_dim
         else:
             self.lstm = None
 
