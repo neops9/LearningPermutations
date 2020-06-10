@@ -60,7 +60,7 @@ class FastText(torch.nn.Module):
         if add_unk:
             n_embs += 1
             n_embs += len(learnperm.special_tokens.Dict())
-            
+
         self.embs = nn.Embedding(n_embs, 300, padding_idx=word_padding_idx)
         self.embs.weight.requires_grad=False
         self.special_embs = SpecialEmbeddingsNetwork(300)
@@ -206,7 +206,7 @@ class FeatureExtractionModule(nn.Module):
 
     def forward(self, inputs):
         repr_list = []
-        
+
         if self.word_embs is not None:
             ret = self.word_embs(inputs)
             repr_list.append(ret)
@@ -214,7 +214,7 @@ class FeatureExtractionModule(nn.Module):
             '''if self.lstm is not None:
                 lstm_ret, _ = self.lstm(ret)
                 repr_list.append(lstm_ret)'''
-                
+
         if self.pos_embs is not None:
             padded_inputs = torch.nn.utils.rnn.pad_sequence(
                 [sentence["tags"].to(self.pos_embs.weight.device) for sentence in inputs],
@@ -343,7 +343,7 @@ class PermutationModule(nn.Module):
 
         self.bigram_left_proj = nn.Linear(input_dim, args.proj_dim, bias=True)
         self.bigram_right_proj = nn.Linear(input_dim, args.proj_dim, bias=False)  # bias will be added by the left proj
-        
+
         self.bigram_activation = nn.ReLU()
         self.bigram_output_proj = nn.Linear(args.proj_dim, 1, bias=True)
 
@@ -401,15 +401,15 @@ class Network(nn.Module):
         super(Network, self).__init__()
         self.feature_extractor = FeatureExtractionModule(args, embeddings_table, add_unk, word_padding_idx, pos_padding_idx, n_tags=n_tags)
         self.weightning = LSTMWeightingModule(self.feature_extractor.output_dim, args, default_lstm_init=True)
-        self.permutation = PermutationModule(args, self.weightning.output_dim, input_dropout=args.input_dropout, proj_dropout=args.proj_dropout)
+        self.permutation = PermutationModule(args, self.feature_extractor.output_dim, input_dropout=args.input_dropout, proj_dropout=args.proj_dropout)
 
     def forward(self, input):
         # input must be of shape: (batch, n words)
         feature = self.feature_extractor(input)
 
-        length = [feature.shape[1] for i in range(len(feature))]
-        ret = self.weightning(feature, length)
-        ret = self.permutation(ret)
+        #length = [feature.shape[1] for i in range(len(feature))]
+        #ret = self.weightning(feature, length)
+        ret = self.permutation(feature)
         return ret
 
     @staticmethod
