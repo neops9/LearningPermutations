@@ -65,6 +65,7 @@ parser.add_argument('--model', type=str, required=True)
 parser.add_argument('--data', type=str, required=True)
 parser.add_argument('--lang', type=str, required=True)
 parser.add_argument('--embeddings', type=str, required=True, help="Path to the embedding folder")
+parser.add_argument('--keep-mwe', action="store_true", help="Keep multi-word expressions order")
 parser.add_argument('--program', type=str, required=True)
 parser.add_argument("--algo-version", type=str, default="n6")
 parser.add_argument("--format", type=str, default="conllu")
@@ -105,19 +106,22 @@ for i, sentence in enumerate(test_data):
     n_words = len(sentence["tokens"])
 
     batch_bigram, batch_start, batch_end = model([sentence])
+    batch_bigram = batch_bigram[0].detach().numpy()
+    batch_start = batch_start[0].detach().numpy()
+    batch_end = batch_end[0].detach().numpy()
 
-    if args.lang == "fr":
-        batch_bigram = fix_mwe(sentence["multiwords"], batch_bigram[0].detach().numpy())
+    if args.keep_mwe:
+        batch_bigram = fix_mwe(sentence["multiwords"], batch_bigram)
 
     infile.write(str(n_words) + " ")
 
-    for v in batch_start[0].flatten().detach().numpy():
+    for v in batch_start.flatten():
         infile.write(str(v) + " ")
 
-    for v in batch_end[0].flatten().detach().numpy():
+    for v in batch_end.flatten():
         infile.write(str(v) + " ")
 
-    for v in batch_bigram:
+    for v in batch_bigram.flatten():
         infile.write(str(v) + " ")
 
     infile.write("\n")
@@ -151,6 +155,7 @@ def build_conll(path, orders):
                 new_token["head"] = order.index(str(token["head"] - 1)) + 1
 
         new_sentence["tokens"] = [sentence["tokens"][int(i)] for i in order]
+        new_sentence["multiwords"] =  []
         yield new_sentence
 
 outfile = open(output_filename, 'r') 

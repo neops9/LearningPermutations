@@ -52,6 +52,7 @@ class SpecialEmbeddingsNetwork(nn.Module):
         special_words_mask = (inputs != 0.).float().float().unsqueeze(-1).expand((inputs.shape[0], inputs.shape[1], 300))
         return values * special_words_mask
 
+
 class FastText(torch.nn.Module):
     def __init__(self, args, embedding_table, add_unk, word_padding_idx):
         super().__init__()
@@ -144,7 +145,7 @@ class FastText(torch.nn.Module):
                     padding_value=self.special_embs.embs.padding_idx
                 )
 
-            #repr_list.append(self.embs(padded_words_right) + self.special_embs(padded_specials_right))
+            repr_list.append(self.embs(padded_words_right) + self.special_embs(padded_specials_right))
 
         if len(repr_list) == 1:
             ret = repr_list[0]
@@ -174,7 +175,7 @@ class FeatureExtractionModule(nn.Module):
         else:
             self.word_embs = None
 
-        '''if args.lstm:
+        if args.lstm:
             self.lstm = nn.LSTM(
                     args.word_embs_dim,
                     args.lstm_dim,
@@ -183,7 +184,7 @@ class FeatureExtractionModule(nn.Module):
                 )
             self.output_dim += args.lstm_dim
         else:
-            self.lstm = None'''
+            self.lstm = None
 
         if self.output_dim == 0:
             raise RuntimeError("No input features set!")
@@ -201,8 +202,8 @@ class FeatureExtractionModule(nn.Module):
         cmd.add_argument('--pos-embs-dim', type=int, default=50, help="Dimension of the POS embs")
         cmd.add_argument('--word-embs', action="store_true", help="Use word embeddings")
         cmd.add_argument('--word-embs-dim', type=int, default=300, help="Dimension of the word embs (FastText = 300)")
-        #cmd.add_argument('--lstm', action="store_true", help="Use word embeddings")
-        #cmd.add_argument('--lstm-dim', type=int, default=200, help="Dimension of the LSTM")
+        cmd.add_argument('--lstm', action="store_true", help="Use word embeddings")
+        cmd.add_argument('--lstm-dim', type=int, default=200, help="Dimension of the LSTM")
 
     def forward(self, inputs):
         repr_list = []
@@ -211,9 +212,9 @@ class FeatureExtractionModule(nn.Module):
             ret = self.word_embs(inputs)
             repr_list.append(ret)
 
-            '''if self.lstm is not None:
+            if self.lstm is not None:
                 lstm_ret, _ = self.lstm(ret)
-                repr_list.append(lstm_ret)'''
+                repr_list.append(lstm_ret)
 
         if self.pos_embs is not None:
             padded_inputs = torch.nn.utils.rnn.pad_sequence(
@@ -231,108 +232,6 @@ class FeatureExtractionModule(nn.Module):
 
         return token_repr
 
-class LSTMWeightingModule(nn.Module):
-    def __init__(self, token_feats_dim, args, default_lstm_init=False):
-        super(LSTMWeightingModule, self).__init__()
-
-        self.residual = args.lstm_residual
-        #self.dropout_lstm_output = pydestruct.nn.dropout.SharedDropout(args.dropout_lstm_output)
-
-        if args.lstm_norm:
-            self.norm = nn.LayerNorm(token_feats_dim)
-        else:
-            self.norm = None
-
-        if args.lstm_custom:
-            self.custom_lstm = True
-            self.lstms = nn.ModuleList([
-                BiLSTM(
-                    token_feats_dim if i == 0 else args.lstm_dim,
-                    args.lstm_dim,
-                    num_layers=args.lstm_layers,
-                )
-                for i in range(args.lstm_stacks)
-            ])
-        else:
-            self.custom_lstm = False
-            self.lstms = nn.ModuleList([
-                nn.LSTM(
-                    token_feats_dim if i == 0 else args.lstm_dim,
-                    args.lstm_dim,
-                    num_layers=args.lstm_layers,
-                    bidirectional=False,
-                    batch_first=True
-                )
-                for i in range(args.lstm_stacks)
-            ])
-
-        self.lstms_h = nn.ParameterList([
-            torch.nn.Parameter(torch.FloatTensor(args.lstm_layers, 1, args.lstm_dim))
-            for _ in range(args.lstm_stacks)
-        ])
-        self.lstms_c = nn.ParameterList([
-            torch.nn.Parameter(torch.FloatTensor(args.lstm_layers, 1, args.lstm_dim))
-            for _ in range(args.lstm_stacks)
-        ])
-
-        self.output_dim = args.lstm_dim
-
-        self.initialize_parameters(default_lstm_init)
-
-    @staticmethod
-    def add_cmd_options(cmd):
-        cmd.add_argument('--lstm-dim', type=int, default=200, help="Dimension of the sentence-level BiLSTM")
-        cmd.add_argument('--lstm-layers', type=int, default=1, help="Number of layers of the sentence-level BiLSTM")
-        cmd.add_argument('--lstm-stacks', type=int, default=2, help="Number of stacks of the sentence-level BiLSTM")
-        cmd.add_argument('--lstm-residual', action="store_true")
-        cmd.add_argument('--lstm-norm', action="store_true")
-        cmd.add_argument('--lstm-custom', action="store_true")
-        cmd.add_argument('--dropout-lstm-output', type=float, default=0.3, help="Dropout rate to apply at the output of the sentence-level BiLSTM")
-
-    def initialize_parameters(self, default_lstm_init=False):
-        # LSTM
-        # xavier init + set bias to 0 except forget bias to !
-        # not that this will actually set the bias to 2 at runtime
-        # because the torch implement use two bias, really strange
-        with torch.no_grad():
-            if (not self.custom_lstm) and (not default_lstm_init):
-                for lstm in self.lstms:
-                    for layer in range(lstm.num_layers):
-                        for name in lstm._all_weights[layer]:
-                            param = getattr(lstm, name)
-                            if name.startswith("weight"):
-                                nn.init.xavier_uniform_(param)
-                            elif name.startswith("bias"):
-                                i = param.size(0) // 4
-                                param[0:i].fill_(0.)
-                                param[i:2 * i].fill_(1.)
-                                param[2 * i:].fill_(0.)
-                            else:
-                                raise RuntimeError("Unexpected parameter name in LSTM: %s" % name)
-
-            # is there a better way to init this?
-            for p in self.lstms_h:
-                nn.init.uniform_(p.data, -0.1, 0.1)
-            for p in self.lstms_c:
-                nn.init.uniform_(p.data, -0.1, 0.1)
-
-    def forward(self, token_repr, lengths):
-        # 2. build context sensitive repr and outpus
-        batch_size = token_repr.shape[0]
-
-        for i, lstm in enumerate(self.lstms):
-            previous = token_repr
-
-            token_repr = torch.nn.utils.rnn.pack_padded_sequence(token_repr, lengths, batch_first=True, enforce_sorted=False)
-            token_repr, _ = lstm(token_repr, (self.lstms_h[i].repeat(1, batch_size, 1), self.lstms_c[i].repeat(1, batch_size, 1)))
-            token_repr, _ = torch.nn.utils.rnn.pad_packed_sequence(token_repr, batch_first=True)
-
-            if self.residual:
-                token_repr = token_repr + previous.data
-            if self.norm is not None:
-                token_repr = self.norm(token_repr)
-
-        return token_repr
 
 class PermutationModule(nn.Module):
     def __init__(self, args, input_dim, input_dropout=0., proj_dropout=0.):
@@ -400,23 +299,18 @@ class Network(nn.Module):
     def __init__(self, args, embeddings_table, add_unk, word_padding_idx, pos_padding_idx, n_tags):
         super(Network, self).__init__()
         self.feature_extractor = FeatureExtractionModule(args, embeddings_table, add_unk, word_padding_idx, pos_padding_idx, n_tags=n_tags)
-        self.weightning = LSTMWeightingModule(self.feature_extractor.output_dim, args, default_lstm_init=True)
         self.permutation = PermutationModule(args, self.feature_extractor.output_dim, input_dropout=args.input_dropout, proj_dropout=args.proj_dropout)
 
     def forward(self, input):
         # input must be of shape: (batch, n words)
         feature = self.feature_extractor(input)
-
-        #length = [feature.shape[1] for i in range(len(feature))]
-        #ret = self.weightning(feature, length)
         ret = self.permutation(feature)
         return ret
 
     @staticmethod
     def add_cmd_options(cmd):
         FeatureExtractionModule.add_cmd_options(cmd)
-        LSTMWeightingModule.add_cmd_options(cmd)
-
+        
         cmd.add_argument('--proj-dim', type=int, default=128, help="Dimension of the output projection")
         cmd.add_argument('--activation', type=str, default="tanh", help="activation to use in weightning modules: tanh, relu, leaky_relu")
         cmd.add_argument('--input-dropout', type=float, default=0., help="Dropout for the input")
