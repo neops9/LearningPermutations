@@ -114,12 +114,14 @@ class ISLoss(nn.Module):
         n_worse_than_gold = sum(gold_score > w)
 
         if self.combine:
+            raise RuntimeError("To check")
             log_Z_is = math.log(math.factorial(n_words)) - math.log(n_words) + w.logsumexp(dim=0, keepdim=False)
             log_Z_ris = math.log(math.factorial(n_words)) + math.log(n_words) - (-w).logsumexp(dim=0, keepdim=False)
             log_Z = (log_Z_is + log_Z_ris)/2
         elif self.reverse:
+            raise RuntimeError("To check")
             log_Z = math.log(math.factorial(n_words)) + math.log(n_words) - (-w).logsumexp(dim=0, keepdim=False)
         else:
-            log_Z = math.log(math.factorial(n_words)) - math.log(n_words) + w.logsumexp(dim=0, keepdim=False)
+            log_Z = - math.log(math.factorial(n_words)) - math.log(n_samples) + w.logsumexp(dim=0, keepdim=False)
 
         return -gold_score + log_Z, n_worse_than_gold
