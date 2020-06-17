@@ -54,6 +54,7 @@ class GumbelSampler(nn.Module):
 
             return rand_perm
 
+
 class Loss(nn.Module):
     def __init__(self, sampler):
         super().__init__()
@@ -125,3 +126,41 @@ class ISLoss(nn.Module):
             log_Z = math.log(math.factorial(n_words)) - math.log(n_samples) + w.logsumexp(dim=0, keepdim=False)
 
         return -gold_score + log_Z, n_worse_than_gold
+
+
+class DifferentISLoss(nn.Module):
+    def __init__(self, sampler):
+        super().__init__()
+        self.sampler = sampler
+
+    def forward(self, bigram, start, end):
+        n_words = len(start)
+        device = start.device
+
+        samples = self.sampler(n_words)
+        n_samples = samples.shape[0]
+
+        start_t = torch.zeros_like(start)
+        end_t = torch.zeros_like(end)
+        bigram_t = torch.zeros_like(bigram)
+
+        start_t[0] = -1
+        end_t[-1] = -1
+        arange = torch.arange(n_words, device=device)
+        bigram_t[arange[:-1], arange[1:]] = -1
+
+        gold_score = - (torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t)).item()
+
+        sample_ratio = start[samples[:, 0]] \
+                       + start[samples[:, -1]] \
+                       + bigram[samples[:, :-1], samples[:, 1:]].sum(dim=1)
+        sample_ratio /= sample_ratio.sum()
+
+        # we cannot batch over samples because inplace op are buffered
+        # and index_add_ is non-deterministic on GPU
+        for i in range(samples.shape[0]):
+            start_t[samples[i, 0]] += sample_ratio[i]
+            end_t[samples[i, -1]] += sample_ratio[i]
+            bigram_t[samples[i, :-1], samples[i, 1:].reshape(-1)] += sample_ratio[i]
+
+        return torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t), gold_score
