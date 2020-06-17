@@ -60,7 +60,7 @@ class Loss(nn.Module):
         super().__init__()
         self.sampler = sampler
 
-    def forward(self, bigram, start, end):
+    def forward(self, bigram, start, end, bigram_bias=None):
         n_words = len(start)
         device = start.device
 
@@ -76,8 +76,6 @@ class Loss(nn.Module):
         arange = torch.arange(n_words, device=device)
         bigram_t[arange[:-1], arange[1:]] = -1
 
-        gold_score = - (torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t)).item()
-
         # we cannot batch over samples because inplace op are buffered
         # and index_add_ is non-deterministic on GPU
         for i in range(samples.shape[0]):
@@ -85,7 +83,10 @@ class Loss(nn.Module):
             end_t[samples[i, -1]] += 1 / n_samples
             bigram_t[samples[i, :-1], samples[i, 1:].reshape(-1)] += 1 / n_samples
 
-        return torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t), gold_score
+        loss = torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t)
+        if bigram_bias is not None:
+            loss = loss + torch.sum(bigram_bias * bigram_t)
+        return loss, 0
 
 
 class ISLoss(nn.Module):
@@ -95,7 +96,7 @@ class ISLoss(nn.Module):
         self.reverse = reverse
         self.combine = combine
 
-    def forward(self, bigram, start, end):
+    def forward(self, bigram, start, end, bigram_bias=None):
         n_words = len(start)
         device = start.device
         samples = self.sampler(n_words)
@@ -104,10 +105,14 @@ class ISLoss(nn.Module):
         # compute gold score, easy!
         arange = torch.arange(n_words, device=device)
         gold_score = start[0] + end[-1] + torch.sum(bigram[arange[:-1], arange[1:]])
+        if bigram_bias is not None:
+            gold_score = gold_score + torch.sum(bigram_bias[arange[:-1], arange[1:]])
 
         # compute sample scores
         # shape: (n batch, n words -1)
         w = bigram[samples[:, :-1], samples[:, 1:]]
+        if bigram_bias is not None:
+            w = w + bigram_bias[samples[:, :-1], samples[:, 1:]].unsqueeze(-1)
 
         # add start and end scores
         # shape: n batch
@@ -125,7 +130,7 @@ class ISLoss(nn.Module):
         else:
             log_Z = math.log(math.factorial(n_words)) - math.log(n_samples) + w.logsumexp(dim=0, keepdim=False)
 
-        return -gold_score + log_Z, n_worse_than_gold
+        return -gold_score + log_Z, n_worse_than_gold.item()
 
 
 class DifferentISLoss(nn.Module):
@@ -133,7 +138,7 @@ class DifferentISLoss(nn.Module):
         super().__init__()
         self.sampler = sampler
 
-    def forward(self, bigram, start, end):
+    def forward(self, bigram, start, end, bigram_bias=None):
         n_words = len(start)
         device = start.device
 
@@ -149,8 +154,6 @@ class DifferentISLoss(nn.Module):
         arange = torch.arange(n_words, device=device)
         bigram_t[arange[:-1], arange[1:]] = -1
 
-        gold_score = - (torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t)).item()
-
         sample_ratio = start[samples[:, 0]] \
                        + start[samples[:, -1]] \
                        + bigram[samples[:, :-1], samples[:, 1:]].sum(dim=1)
@@ -163,4 +166,7 @@ class DifferentISLoss(nn.Module):
             end_t[samples[i, -1]] += sample_ratio[i]
             bigram_t[samples[i, :-1], samples[i, 1:].reshape(-1)] += sample_ratio[i]
 
-        return torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t), gold_score
+        loss = torch.sum(start * start_t) + torch.sum(end * end_t) + torch.sum(bigram * bigram_t)
+        if bigram_bias is not None:
+            loss = loss + torch.sum(bigram_bias * bigram_t)
+        return loss, 0

@@ -234,7 +234,7 @@ class FeatureExtractionModule(nn.Module):
 
 
 class PermutationModule(nn.Module):
-    def __init__(self, args, input_dim, input_dropout=0., proj_dropout=0.):
+    def __init__(self, args, input_dim, input_dropout=0., proj_dropout=0., bigram_bias=False):
         super(PermutationModule, self).__init__()
 
         self.input_dropout = SequenceDropout(p=input_dropout, broadcast_time=True, broadcast_batch=False)
@@ -262,6 +262,13 @@ class PermutationModule(nn.Module):
             nn.Linear(args.proj_dim, 1, bias=True)
         )
 
+        if bigram_bias:
+            self.bigram1 = nn.Parameter(torch.zeros(1))
+            self.bigram2 = nn.Parameter(torch.zeros(1))
+        else:
+            self.bigram1 = None
+            self.bigram2 = None
+
         self.initialize_parameters()
 
     def initialize_parameters(self):
@@ -273,7 +280,7 @@ class PermutationModule(nn.Module):
             self.end_builder[0].bias.zero_()
             self.end_builder[3].bias.zero_()
 
-    def forward(self, input):
+    def forward(self, input, add_bigram_bias=True):
         n_batch = input.shape[0]
         n_words = input.shape[1]
         input = self.input_dropout(input)
@@ -292,19 +299,33 @@ class PermutationModule(nn.Module):
         proj = self.proj_dropout(proj.reshape(n_batch, n_words * n_words, -1)).reshape(n_batch, n_words, n_words, -1)
         bigram = self.bigram_output_proj(proj)
 
+        if self.has_bigram_bias() and add_bigram_bias:
+            bigram = bigram + self.get_bigram_bias(n_words, bigram.device)
+
         return bigram, start, end
+
+    def has_bigram_bias(self):
+        return self.bigram1 is not None
+
+    def get_bigram_bias(self, n_words, device="cpu"):
+        mask = torch.zeros(1, n_words, n_words, requires_grad=False).to(device)
+        arange = torch.arange(n_words, device=device)
+        mask[0, arange[:-1], arange[1:]] = 1
+
+        bigram_bias = mask * self.bigram1 + (1.0 - mask) * self.bigram2
+        return bigram_bias
 
 
 class Network(nn.Module):
     def __init__(self, args, embeddings_table, add_unk, word_padding_idx, pos_padding_idx, n_tags):
         super(Network, self).__init__()
         self.feature_extractor = FeatureExtractionModule(args, embeddings_table, add_unk, word_padding_idx, pos_padding_idx, n_tags=n_tags)
-        self.permutation = PermutationModule(args, self.feature_extractor.output_dim, input_dropout=args.input_dropout, proj_dropout=args.proj_dropout)
+        self.permutation = PermutationModule(args, self.feature_extractor.output_dim, input_dropout=args.input_dropout, proj_dropout=args.proj_dropout, bigram_bias=args.bigram_bias)
 
-    def forward(self, input):
+    def forward(self, input, add_bigram_bias=True):
         # input must be of shape: (batch, n words)
         feature = self.feature_extractor(input)
-        ret = self.permutation(feature)
+        ret = self.permutation(feature, add_bigram_bias=add_bigram_bias)
         return ret
 
     @staticmethod
@@ -316,3 +337,4 @@ class Network(nn.Module):
         cmd.add_argument('--input-dropout', type=float, default=0., help="Dropout for the input")
         cmd.add_argument('--proj-dropout', type=float, default=0., help="Dropout for the proj")
         cmd.add_argument('--add-context', action="store_true", help="Add left and right context")
+        cmd.add_argument('--bigram-bias', action="store_true", help="Add bigram bias")

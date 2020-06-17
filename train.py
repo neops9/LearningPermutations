@@ -76,27 +76,40 @@ optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters(
 scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.decay_rate)
 
 sampler = loss.RandomSampler(args.samples)
-loss_builder = loss.ISLoss(sampler)
-loss_builder.to(args.device)
 
-def compute_batch_loss(batch):
+# TODO: add an option to switch between Loss/ISLoss/DifferentISLoss
+train_loss_builder = loss.ISLoss(sampler)
+train_loss_builder.to(args.device)
+
+# we always use the ISLoss for dev eval
+dev_loss_builder = loss.ISLoss(sampler)
+dev_loss_builder.to(args.device)
+
+def compute_batch_loss(batch, builder):
     batch_lengths = [len(s["tokens"]) for s in batch]
     batch = [s for s in batch]    
 
     # bigram shape: (n batch, n words, n words)
     # start and end shape: (n batch, n words)
-    batch_bigram, batch_start, batch_end = model(batch)
+    batch_bigram, batch_start, batch_end = model(batch, add_bigram_bias=False)
 
     # batching the loss may be way too difficult as we will have
     # some kind of special loss modules
     # lets split everything by hand
     batch_loss = list()
     n_worse_than_gold_total = 0.
+    if model.permutation.has_bigram_bias():
+        batch_bigram_bias = model.permutation.get_bigram_bias(n_words=batch_bigram.shape[1], device=batch_bigram.device)
+        batch_bigram_bias = batch_bigram_bias.squeeze(0)
     for b, l in enumerate(batch_lengths):
         bigram = batch_bigram[b, :l, :l]
         start = batch_start[b, :l]
         end = batch_end[b, :l]
-        loss, n_worse_than_gold = loss_builder(bigram, start, end)
+        loss, n_worse_than_gold = builder(
+            bigram,
+            start, end,
+            batch_bigram_bias[:l, :l] if model.permutation.has_bigram_bias() else None
+        )
         batch_loss.append(loss)
         n_worse_than_gold_total += n_worse_than_gold
 
@@ -112,9 +125,9 @@ for epoch in range(args.epochs):
     train_n_worse = 0.
     for batch in train_data:
         optimizer.zero_grad()
-        loss, n_worse = compute_batch_loss(batch)
+        loss, n_worse = compute_batch_loss(batch, train_loss_builder)
         train_loss += loss.item()
-        train_n_worse += n_worse.item()
+        train_n_worse += n_worse
 
         loss = loss / len(batch)
         loss.backward()
@@ -143,9 +156,9 @@ for epoch in range(args.epochs):
         with torch.no_grad():
             for batch in data:
                 dev_denum += len(batch)
-                l, n = compute_batch_loss(batch)
+                l, n = compute_batch_loss(batch, dev_loss_builder)
                 dev_loss += l.item()
-                dev_n_worse += n.item()
+                dev_n_worse += n
         dev_losses[lang] = dev_loss / dev_denum
         dev_n_worses[lang] = dev_n_worse / (dev_denum * args.samples)
 
