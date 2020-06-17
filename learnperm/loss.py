@@ -122,6 +122,6 @@ class ISLoss(nn.Module):
             raise RuntimeError("To check")
             log_Z = math.log(math.factorial(n_words)) + math.log(n_words) - (-w).logsumexp(dim=0, keepdim=False)
         else:
-            log_Z = - math.log(math.factorial(n_words)) - math.log(n_samples) + w.logsumexp(dim=0, keepdim=False)
+            log_Z = math.log(math.factorial(n_words)) - math.log(n_samples) + w.logsumexp(dim=0, keepdim=False)
 
         return -gold_score + log_Z, n_worse_than_gold
