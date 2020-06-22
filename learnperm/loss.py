@@ -1,6 +1,7 @@
 import torch
 import math
 import torch.nn as nn
+import random
 
 class RandomSampler(nn.Module):
     def __init__(self, n_samples):
@@ -23,6 +24,9 @@ class BigramSampler(nn.Module):
         self.s = []
 
     def findPermutations(self, string, index, n):
+        if len(self.s) >= self.k:
+            return
+
         if index >= n or (index + 1) >= n:
             self.s.append(string.copy())
             return
