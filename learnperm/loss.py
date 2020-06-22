@@ -16,6 +16,30 @@ class RandomSampler(nn.Module):
         rand_perm = rand.argsort(dim=1)
         return rand_perm
 
+class BigramSampler(nn.Module):
+    def __init__(self, n_samples):
+        super().__init__()
+        self.k = n_samples
+        self.s = []
+
+    def findPermutations(self, string, index, n):
+        if index >= n or (index + 1) >= n:
+            self.s.append(string.copy())
+            return
+
+        self.findPermutations(string, index + 1, n)
+
+        string[index], string[index + 1] = string[index + 1], string[index]
+
+        self.findPermutations(string, index + 2, n)
+
+        string[index], string[index + 1] = string[index + 1], string[index]
+
+    def forward(self, n_words):
+        i = list(range(n_words))
+        self.findPermutations(i, 0, n_words)
+        return torch.IntTensor(self.s)
+
 class GumbelSampler(nn.Module):
     def __init__(self, n_samples):
         super().__init__()
@@ -110,7 +134,7 @@ class ISLoss(nn.Module):
 
         # compute sample scores
         # shape: (n batch, n words -1)
-        w = bigram[samples[:, :-1], samples[:, 1:]]
+        w = bigram[samples[:, :-1], samples[:, 1:]].unsqueeze(-1)
         if bigram_bias is not None:
             w = w + bigram_bias[samples[:, :-1], samples[:, 1:]].unsqueeze(-1)
 
