@@ -25,6 +25,7 @@ cmd.add_argument("--model", type=str, default="", help="Path where to store the 
 cmd.add_argument("--format", type=str, default="conllu")
 cmd.add_argument("--lr", type=float, default=0.005)
 cmd.add_argument("--weight-decay", type=float, default=0.)
+cmd.add_argument("--loss", type=str, help="Which loss to use (is, diff-is), if not specified the default loss will be used")
 cmd.add_argument("--samples", type=int, default=10000, help="Number of samples")
 cmd.add_argument("--epochs", type=int, default=500, help="Number of epochs for training")
 cmd.add_argument('--storage-device', type=str, default="cpu", help="Device to use for data storage")
@@ -77,8 +78,14 @@ scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.decay_r
 
 sampler = loss.RandomSampler(args.samples)
 
-# TODO: add an option to switch between Loss/ISLoss/DifferentISLoss
-train_loss_builder = loss.ISLoss(sampler)
+# Default loss
+train_loss_builder = loss.Loss(sampler)
+
+if args.loss == "is":
+    train_loss_builder = loss.ISLoss(sampler)
+elif args.loss == "diff-is":
+    train_loss_builder = loss.DifferentISLoss(sampler)
+
 train_loss_builder.to(args.device)
 
 # we always use the ISLoss for dev eval
@@ -87,7 +94,7 @@ dev_loss_builder.to(args.device)
 
 def compute_batch_loss(batch, builder):
     batch_lengths = [len(s["tokens"]) for s in batch]
-    batch = [s for s in batch]    
+    batch = [s for s in batch]
 
     # bigram shape: (n batch, n words, n words)
     # start and end shape: (n batch, n words)
