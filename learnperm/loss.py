@@ -1,5 +1,6 @@
 import torch
 import math
+import random
 import torch.nn as nn
 
 class RandomSampler(nn.Module):
@@ -11,11 +12,47 @@ class RandomSampler(nn.Module):
             torch.tensor([1.])
         )
 
-    def forward(self, n_words):
+    def forward(self, n_words, bigram, start, end, bigram_bias=None):
         rand = self.gumbel.sample((self.k, n_words)).squeeze()
         rand_perm = rand.argsort(dim=1)
         return rand_perm
 
+
+class DumbMCMC(nn.Module):
+    def __init__(self, n_samples, N=10):
+        super().__init__()
+        self.chain_size = n_samples * N
+        self.N = N
+        self.gumbel = torch.distributions.Gumbel(
+            torch.tensor([0.]),
+            torch.tensor([1.])
+        )
+
+    def forward(self, n_words, bigram, start, end, bigram_bias=None):
+        with torch.no_grad():
+            rand = self.gumbel.sample((self.chain_size, n_words)).squeeze()
+            rand_perm = rand.argsort(dim=1)
+
+            # compute weights of samples
+            w = bigram[rand_perm[:, :-1], rand_perm[:, 1:]]
+            if bigram_bias is not None:
+                w = w + bigram_bias[rand_perm[:, :-1], rand_perm[:, 1:]].unsqueeze(-1)
+            w = w.sum(dim=1) + start[rand_perm[:, 0]] + end[rand_perm[:, -1]]
+
+            chain = torch.empty((self.chain_size, n_words), dtype=torch.long, device=bigram.device)
+            chain[0] = rand_perm[0]
+            w_last = w[0]
+            for i in range(1, self.chain_size):
+                p = min(1., math.exp(w[i].item() - w_last))
+                if p > random.uniform(0, 1):
+                    chain[i] = rand_perm[i]
+                    w_last = w[i].item()
+                else:
+                    chain[i] = chain[i - 1]
+
+            return chain[torch.arange(0, self.chain_size, self.N) + (self.N - 1)]
+
+"""
 class GumbelSampler(nn.Module):
     def __init__(self, n_samples):
         super().__init__()
@@ -53,7 +90,7 @@ class GumbelSampler(nn.Module):
                 bigram[arange, :, pred] = float("-inf")
 
             return rand_perm
-
+"""
 
 class Loss(nn.Module):
     def __init__(self, sampler):
@@ -64,7 +101,7 @@ class Loss(nn.Module):
         n_words = len(start)
         device = start.device
 
-        samples = self.sampler(n_words)
+        samples = self.sampler(n_words, bigram, start, end, bigram_bias)
         n_samples = samples.shape[0]
 
         start_t = torch.zeros_like(start)
@@ -99,7 +136,7 @@ class ISLoss(nn.Module):
     def forward(self, bigram, start, end, bigram_bias=None):
         n_words = len(start)
         device = start.device
-        samples = self.sampler(n_words)
+        samples = self.sampler(n_words, bigram, start, end, bigram_bias)
         n_samples = samples.shape[0]
 
         # compute gold score, easy!
@@ -142,7 +179,7 @@ class DifferentISLoss(nn.Module):
         n_words = len(start)
         device = start.device
 
-        samples = self.sampler(n_words)
+        samples = self.sampler(n_words, bigram, start, end, bigram_bias)
         n_samples = samples.shape[0]
 
         start_t = torch.zeros_like(start)
