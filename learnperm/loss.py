@@ -113,9 +113,6 @@ class BetterMCMC(nn.Module):
 
                 sample = np.concatenate([perm2[:new_position], [to_move_id], perm2[new_position:]])
                 transition_prob = p[new_position] * 1 / n_words
-
-                perm2 = np.concatenate([sample[:new_position], sample[new_position + 1:]])
-                p = self._probs(n_words, bigram, start, end, perm2, to_move_id)
                 reverse_transition_prob = p[to_move_position] * 1 / n_words
 
                 # compute weights of sample
