@@ -221,7 +221,7 @@ class DifferentISLoss(nn.Module):
         bigram_t[arange[:-1], arange[1:]] = -1
 
         sample_ratio = start[samples[:, 0]] \
-                       + start[samples[:, -1]] \
+                       + end[samples[:, -1]] \
                        + bigram[samples[:, :-1], samples[:, 1:]].sum(dim=1)
         sample_ratio /= sample_ratio.sum()
 
