@@ -33,6 +33,7 @@ class DumbMCMC(nn.Module):
         with torch.no_grad():
             rand = self.gumbel.sample((self.chain_size, n_words)).squeeze()
             rand_perm = rand.argsort(dim=1)
+            gold = list(range(n_words))
 
             # compute weights of samples
             w = bigram[rand_perm[:, :-1], rand_perm[:, 1:]]
@@ -42,10 +43,16 @@ class DumbMCMC(nn.Module):
 
             chain = torch.empty((self.chain_size, n_words), dtype=torch.long, device=bigram.device)
             chain[0] = rand_perm[0]
+
+            for i in range(1, self.chain_size):
+                if chain[0].tolist() != gold:
+                    break
+                chain[0] = rand_perm[i]
+
             w_last = w[0]
             for i in range(1, self.chain_size):
                 p = min(1., math.exp(w[i].item() - w_last))
-                if p > random.uniform(0, 1):
+                if p > random.uniform(0, 1) and rand_perm[i].tolist() != gold:
                     chain[i] = rand_perm[i]
                     w_last = w[i].item()
                 else:
@@ -176,7 +183,7 @@ class ISLoss(nn.Module):
 
         # compute sample scores
         # shape: (n batch, n words -1)
-        w = bigram[samples[:, :-1], samples[:, 1:]].unsqueeze(-1)
+        w = bigram[samples[:, :-1], samples[:, 1:]]#.unsqueeze(-1)
         if bigram_bias is not None:
             w = w + bigram_bias[samples[:, :-1], samples[:, 1:]].unsqueeze(-1)
 
