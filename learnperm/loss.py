@@ -72,7 +72,7 @@ class BetterMCMC(nn.Module):
         )
         self.random_start = random_start
 
-    def _probs(self, bigram, start, end, perm2, target):
+    def _probs(self, n_words, bigram, start, end, perm2, target):
         p = np.zeros(n_words)
         p[0] += start[target].item()
         p[-1] += end[target].item()
@@ -108,14 +108,14 @@ class BetterMCMC(nn.Module):
                 to_move_id = chain[i - 1, to_move_position]
                 perm2 = np.concatenate([chain[i - 1, :to_move_position], chain[i - 1, to_move_position + 1:]])
 
-                p = self._probs(bigram, start, end, perm2, to_move_id)
+                p = self._probs(n_words, bigram, start, end, perm2, to_move_id)
                 new_position = np.random.choice(n_words, p=p)
 
                 sample = np.concatenate([perm2[:new_position], [to_move_id], perm2[new_position:]])
                 transition_prob = p[new_position] * 1 / n_words
 
                 perm2 = np.concatenate([sample[:new_position], sample[new_position + 1:]])
-                p = probs(bigram, start, end, perm2, to_move_id)
+                p = self._probs(n_words, bigram, start, end, perm2, to_move_id)
                 reverse_transition_prob = p[to_move_position] * 1 / n_words
 
                 # compute weights of sample
