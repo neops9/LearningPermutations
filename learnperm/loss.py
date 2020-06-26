@@ -3,6 +3,7 @@ import math
 import numpy as np
 import torch.nn as nn
 import random
+import learnperm.faststuff
 
 class RandomSampler(nn.Module):
     def __init__(self, n_samples):
@@ -64,69 +65,25 @@ class DumbMCMC(nn.Module):
 class BetterMCMC(nn.Module):
     def __init__(self, n_samples, N=10, random_start=False):
         super().__init__()
+        if N < 1:
+            raise RuntimeError("N must be >= 1")
+        self.n_samples = n_samples
         self.chain_size = n_samples * N
         self.N = N
-        self.gumbel = torch.distributions.Gumbel(
-            torch.tensor([0.]),
-            torch.tensor([1.])
-        )
         self.random_start = random_start
-
-    def _probs(self, n_words, bigram, start, end, perm2, target):
-        p = np.zeros(n_words)
-        p[0] += start[target].item()
-        p[-1] += end[target].item()
-        for i in range(n_words):
-            if i > 0:
-                p[i] += bigram[perm2[i - 1], target]
-            if i < n_words - 1:
-                p[i] += bigram[target, perm2[i]]
-
-        # softmax
-        p = np.exp(p - np.max(p))
-        p /= p.sum()
-
-        return p
 
     def forward(self, n_words, bigram, start, end, bigram_bias=None):
         if bigram_bias is not None:
             raise NotImplementedError("Et non! la flemme...")
 
+        device = bigram.device
         with torch.no_grad():
-            chain = np.empty((self.chain_size, n_words), dtype=np.int)
-            if self.random_start:
-                chain[0] = np.random.permutation(n_words)
-            else:
-                chain[0] = np.arange(n_words)
+            bigram = bigram.detach().cpu().numpy()
+            start = start.detach().cpu().numpy()
+            end = end.detach().cpu().numpy()
 
-            # compute weights of init sample
-            w_last = bigram[chain[0, :-1], chain[0, 1:]]
-            w_last = w_last.sum().item() + start[chain[0, 0]].item() + end[chain[0, -1]].item()
-
-            for i in range(1, self.chain_size):
-                to_move_position = np.random.choice(n_words)
-                to_move_id = chain[i - 1, to_move_position]
-                perm2 = np.concatenate([chain[i - 1, :to_move_position], chain[i - 1, to_move_position + 1:]])
-
-                p = self._probs(n_words, bigram, start, end, perm2, to_move_id)
-                new_position = np.random.choice(n_words, p=p)
-
-                sample = np.concatenate([perm2[:new_position], [to_move_id], perm2[new_position:]])
-                transition_prob = p[new_position] * 1 / n_words
-                reverse_transition_prob = p[to_move_position] * 1 / n_words
-
-                # compute weights of sample
-                new_weight = bigram[sample[:-1], sample[1:]]
-                new_weight = new_weight.sum().item() + start[sample[0]].item() + end[sample[-1]].item()
-
-                p = min(1., math.exp(new_weight - w_last) * transition_prob / reverse_transition_prob)
-                if p > random.uniform(0, 1):
-                    chain[i] = sample
-                    w_last = new_weight
-                else:
-                    chain[i] = chain[i - 1]
-
-            return torch.from_numpy(chain[np.arange(0, self.chain_size, self.N) + (self.N - 1)]).to(bigram.device)
+            chain = learnperm.faststuff.generate_chain(n_words, self.n_samples, self.N, self.random_start, bigram, start, end)
+            return torch.from_numpy(chain).to(device)
 
 class BigramSampler(nn.Module):
     def __init__(self, n_samples):
@@ -204,7 +161,7 @@ class Loss(nn.Module):
         n_words = len(start)
         device = start.device
 
-        samples = self.sampler(n_words, bigram, start, end, bigram_bias)
+        samples = self.sampler(n_words, np.squeeze(bigram, axis=2), np.squeeze(start, axis=1), np.squeeze(end, axis=1), bigram_bias)
         n_samples = samples.shape[0]
 
         start_t = torch.zeros_like(start)
@@ -239,7 +196,7 @@ class ISLoss(nn.Module):
     def forward(self, bigram, start, end, bigram_bias=None):
         n_words = len(start)
         device = start.device
-        samples = self.sampler(n_words, bigram, start, end, bigram_bias)
+        samples = self.sampler(n_words, np.squeeze(bigram, axis=2), np.squeeze(start, axis=1), np.squeeze(end, axis=1), bigram_bias)
         n_samples = samples.shape[0]
 
         # compute gold score, easy!
