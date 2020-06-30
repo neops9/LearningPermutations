@@ -83,6 +83,31 @@ class BetterMCMC(nn.Module):
             end = end.detach().cpu().numpy()
 
             chain = learnperm.faststuff.generate_chain(n_words, self.n_samples, self.N, self.random_start, bigram, start, end)
+            #print(chain)
+            #print(torch.from_numpy(np.array([chain])).to(device).shape)
+            return torch.from_numpy(chain).to(device)
+
+class Two_opt(nn.Module):
+    def __init__(self, n_samples, N=10, random_start=False):
+        super().__init__()
+        if N < 1:
+            raise RuntimeError("N must be >= 1")
+        self.n_samples = n_samples
+        self.chain_size = n_samples * N
+        self.N = N
+        self.random_start = random_start
+
+    def forward(self, n_words, bigram, start, end, bigram_bias=None):
+        if bigram_bias is not None:
+            raise NotImplementedError("Et non! la flemme...")
+
+        device = bigram.device
+        with torch.no_grad():
+            bigram = bigram.detach().cpu().numpy()
+            start = start.detach().cpu().numpy()
+            end = end.detach().cpu().numpy()
+
+            chain = learnperm.faststuff.two_opt(n_words, self.n_samples, self.N, bigram, start, end)
             return torch.from_numpy(chain).to(device)
 
 class BigramSampler(nn.Module):

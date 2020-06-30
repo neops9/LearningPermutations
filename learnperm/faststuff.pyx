@@ -87,3 +87,43 @@ def generate_chain(long n_words, long n_samples, long N, random_start, bigram, s
         chain[i] = mcmc_head
 
     return chain.base
+
+@cython.boundscheck(False)  # Deactivate bounds checking
+@cython.wraparound(False)   # Deactivate negative indexing.
+def two_opt(long n_words, long n_samples, long N, bigram, start, end):
+    cdef float[:, :] bigram_view = bigram
+    cdef float[:] start_view = start
+    cdef float[:] end_view = end
+
+    cdef long[:, :] chain = np.empty((n_samples, n_words), dtype=int)
+
+    # compute weights of init sample
+    #cdef float w_last = bigram_view.base[mcmc_head[0:n_words-1], mcmc_head[1:n_words]].sum()
+    #w_last += start_view[mcmc_head[0]] + end_view[mcmc_head[n_words-1]]
+
+    cdef long[:] sample = np.random.shuffle(np.arange(n_words, dtype=int))
+
+    cdef Py_ssize_t i, j, k
+    cdef float min_change, change
+    cdef int min_i, min_j
+
+    for k in range(n_samples):
+        sample = np.arange(n_words, dtype=int)
+        np.random.shuffle(sample)
+        min_change = 0
+
+        # Find the best move
+        for i in range(n_words - 2):
+            for j in range(i + 2, n_words - 1):
+                change = bigram_view[sample[i], sample[j]] + bigram_view[sample[i+1], sample[j+1]]
+                change = - bigram_view[sample[i], sample[i+1]] - bigram_view[sample[j], sample[j+1]]
+                if change < min_change:
+                    min_change = change
+                    min_i, min_j = i, j
+
+        # Update tour with best move
+        if min_change < 0:
+            sample[min_i+1:min_j+1] = sample[min_i+1:min_j+1][::-1]
+
+        chain[k] = sample
+    return chain.base
