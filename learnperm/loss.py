@@ -108,6 +108,7 @@ class Two_opt(nn.Module):
             end = end.detach().cpu().numpy()
 
             chain = learnperm.faststuff.two_opt(n_words, self.n_samples, self.N, bigram, start, end)
+            #print(chain)
             return torch.from_numpy(chain).to(device)
 
 class BigramSampler(nn.Module):

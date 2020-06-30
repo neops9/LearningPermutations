@@ -90,6 +90,11 @@ def generate_chain(long n_words, long n_samples, long N, random_start, bigram, s
 
 @cython.boundscheck(False)  # Deactivate bounds checking
 @cython.wraparound(False)   # Deactivate negative indexing.
+cdef float cost(long n_words, long[:] sample, float[:,:] bigram_view, float[:] start_view, float[:] end_view):
+    return bigram_view.base[sample[0:n_words-1], sample[1:n_words]].sum() + start_view[sample[0]] + end_view[sample[n_words-1]]
+
+@cython.boundscheck(False)  # Deactivate bounds checking
+@cython.wraparound(False)   # Deactivate negative indexing.
 def two_opt(long n_words, long n_samples, long N, bigram, start, end):
     cdef float[:, :] bigram_view = bigram
     cdef float[:] start_view = start
@@ -106,19 +111,46 @@ def two_opt(long n_words, long n_samples, long N, bigram, start, end):
     cdef Py_ssize_t i, j, k
     cdef float min_change, change
     cdef int min_i, min_j
+    improved = True
 
     for k in range(n_samples):
         sample = np.arange(n_words, dtype=int)
         np.random.shuffle(sample)
         min_change = 0
 
+
+
+        improved = True
+        while improved:
+            improved = False
+            for i in range(1, n_words - 2):
+                for j in range(i + 1, n_words):
+                    if j - i == 1:
+                        continue
+
+                    new_sample = sample[:] # Creates a copy of the sample
+                    #print("I :", i, " | J :", j)
+                    #print("SAMPLE :", sample.base)
+                    new_sample[i:j] = sample[j - 1:i - 1:-1]
+                    #print("NEW SAMPLE :", new_sample.base)
+                    #print("--------------------")
+                    if cost(n_words, new_sample, bigram_view, start_view, end_view) > cost(n_words, sample, bigram_view, start_view, end_view):
+                        sample = new_sample
+                        improved = True    
+
+        chain[k] = sample
+
+
         # Find the best move
+        '''
         for i in range(n_words - 2):
             for j in range(i + 2, n_words - 1):
                 change = bigram_view[sample[i], sample[j]] + bigram_view[sample[i+1], sample[j+1]]
-                change = - bigram_view[sample[i], sample[i+1]] - bigram_view[sample[j], sample[j+1]]
-                if change < min_change:
-                    min_change = change
+                change -= bigram_view[sample[i], sample[i+1]] + bigram_view[sample[j], sample[j+1]]
+
+
+                if -change < min_change:
+                    min_change = -change
                     min_i, min_j = i, j
 
         # Update tour with best move
@@ -126,4 +158,6 @@ def two_opt(long n_words, long n_samples, long N, bigram, start, end):
             sample[min_i+1:min_j+1] = sample[min_i+1:min_j+1][::-1]
 
         chain[k] = sample
+        '''
+
     return chain.base
