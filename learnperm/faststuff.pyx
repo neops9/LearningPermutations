@@ -88,11 +88,12 @@ def generate_chain(long n_words, long n_samples, long N, random_start, bigram, s
 
     return chain.base
 
-@cython.boundscheck(False)  # Deactivate bounds checking
+'''@cython.boundscheck(False)  # Deactivate bounds checking
 @cython.wraparound(False)   # Deactivate negative indexing.
 cdef float cost(long n_words, long[:] sample, float[:,:] bigram_view, float[:] start_view, float[:] end_view):
-    return bigram_view.base[sample[0:n_words-1], sample[1:n_words]].sum() + start_view[sample[0]] + end_view[sample[n_words-1]]
-
+    return 0
+    #return bigram_view.base[sample[0:n_words-1], sample[1:n_words]].sum() + start_view[sample[0]] + end_view[sample[n_words-1]]
+'''
 @cython.boundscheck(False)  # Deactivate bounds checking
 @cython.wraparound(False)   # Deactivate negative indexing.
 def two_opt(long n_words, long n_samples, long N, bigram, start, end):
@@ -116,8 +117,7 @@ def two_opt(long n_words, long n_samples, long N, bigram, start, end):
     for k in range(n_samples):
         sample = np.arange(n_words, dtype=int)
         np.random.shuffle(sample)
-        min_change = 0
-
+        last_cost = bigram_view.base[sample[0:n_words-1], sample[1:n_words]].sum() + start_view[sample[0]] + end_view[sample[n_words-1]]
 
 
         improved = True
@@ -134,9 +134,14 @@ def two_opt(long n_words, long n_samples, long N, bigram, start, end):
                     new_sample[i:j] = sample[j - 1:i - 1:-1]
                     #print("NEW SAMPLE :", new_sample.base)
                     #print("--------------------")
-                    if cost(n_words, new_sample, bigram_view, start_view, end_view) > cost(n_words, sample, bigram_view, start_view, end_view):
+
+                    change = bigram_view[sample[i-1], sample[j-1]] + bigram_view[sample[j-2], sample[i]]
+                    change -= bigram_view[sample[i-1], sample[i]] + bigram_view[sample[j-2], sample[j-1]]
+
+                    if change > 0:
                         sample = new_sample
-                        improved = True    
+                        last_cost += change
+                        improved = False    
 
         chain[k] = sample
 
