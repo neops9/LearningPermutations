@@ -287,7 +287,7 @@ def local_search(long n_words, bigram, start, end):
     for route_it in range(route_array.shape[0]):
         best_found_route.push_back(route_array[route_it])
 
-    best_cost = c_route_cost(graph_array, best_found_route)
+    best_cost = c_route_cost(graph_array, best_found_route) + start_view[best_found_route[0]] + end_view[best_found_route[n_words-1]]
     while improved == 1:
         improved = 0
         for index in range(1, max_index):
@@ -295,7 +295,7 @@ def local_search(long n_words, bigram, start, end):
                 # Swap internally between index and kindex
                 with nogil, parallel():
                     new_route = _swap(route_array, index, kindex)
-                cost = c_route_cost(graph_array, new_route)
+                cost = c_route_cost(graph_array, new_route) + start_view[new_route[0]] + end_view[new_route[n_words-1]]
                 if cost > best_cost:
                     best_cost = cost
                     best_found_route = new_route
