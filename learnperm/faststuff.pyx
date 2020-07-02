@@ -14,7 +14,6 @@ cdef extern from "math.h":
 from cpython cimport array
 import array
 
-
 @cython.boundscheck(False)  # Deactivate bounds checking
 @cython.wraparound(False)   # Deactivate negative indexing.
 def _probs(long n_words, float[:, :]& bigram, float[:]& start, float[:]& end, long[:]& perm2, int target, float[:]& p):
@@ -99,169 +98,47 @@ def generate_chain(long n_words, long n_samples, long N, random_start, bigram, s
 
     return chain.base
 
-@cython.boundscheck(False)  # Deactivate bounds checking
-@cython.wraparound(False)   # Deactivate negative indexing.
-def two_opt(long n_words, long n_samples, long N, bigram, start, end):
-    cdef float[:, :] bigram_view = bigram
-    cdef float[:] start_view = start
-    cdef float[:] end_view = end
-
-    cdef long[:, :] chain = np.empty((n_samples, n_words), dtype=int)
-
-    cdef long[:] sample = np.arange(n_words, dtype=int)
-    np.random.shuffle(sample)
-
-    cdef Py_ssize_t i, j, k
-    cdef float change
-    improved = True
-
-    for k in range(n_samples):
-        sample = np.arange(n_words, dtype=int)
-        np.random.shuffle(sample)
-
-        improved = True
-        p = 0
-        while improved and p < 20:
-            improved = False
-            p += 1
-            for i in range(1, n_words - 2):
-                for j in range(i + 1, n_words):
-                    if j - i == 1:
-                        continue
-
-                    new_sample = sample[:] # Creates a copy of the sample
-                    new_sample[i:j] = sample[j - 1:i - 1:-1]
-
-                    change = bigram_view[sample[i-1], sample[j-1]] + bigram_view[sample[j-2], sample[i]]
-                    change -= bigram_view[sample[i-1], sample[i]] + bigram_view[sample[j-2], sample[j-1]]
-
-                    if change > 0:
-                        sample = new_sample
-                        improved = True    
-
-        print(sample)
-        print(type(sample))
-        chain[k] = sample
-
-    return chain.base
-
-@cython.boundscheck(False)  # Deactivate bounds checking
-@cython.wraparound(False)   # Deactivate negative indexing.
-def two_opt_bis(long n_words, long n_samples, long N, bigram, start, end):
-
-    cdef float[:, :] bigram_view = bigram
-    cdef float[:] start_view = start
-    cdef float[:] end_view = end
-
-    cdef long[:, :] chain = np.empty((n_samples, n_words), dtype=int)
-
-    cdef long[:] sample = np.arange(n_words, dtype=int)
-    np.random.shuffle(sample)
-
-    cdef float min_change, change
-    cdef int i, j, min_i, min_j
-
-    for k in range(n_samples):
-        sample = np.arange(n_words, dtype=int)
-        np.random.shuffle(sample)
-        last_cost = bigram_view.base[sample[0:n_words-1], sample[1:n_words]].sum() + start_view[sample[0]] + end_view[sample[n_words-1]]
-
-        min_change = 0
-
-        improved = True
-        while improved:
-            improved = False
-            # Find the best move
-            for i in range(n_words - 2):
-                for j in range(i + 2, n_words - 1):
-                    change = bigram_view[sample[i], sample[j]] + bigram_view[sample[i+1], sample[j+1]]
-                    change -= bigram_view[sample[i], sample[i+1]] + bigram_view[sample[j], sample[j+1]]
-                    if change > min_change:
-                        min_change = change
-                        min_i, min_j = i, j
-            # Update tour with best move
-            if min_change > 0:
-                improved = False
-                sample[min_i+1:min_j+1] = sample[min_i+1:min_j+1][::-1]
-
-
-        chain[k] = sample
-
-    return chain.base
+# Adapted from https://github.com/lucventurini/pytritex/blob/fc137ed36902e2300cf26207fed333019a30dad9/pytritex/graph_utils/k_opt_tsp.pyx
 
 @cython.wraparound(False)
 @cython.boundscheck(False)
-cdef double c_route_cost(double[:, :] graph, vector[long] path) nogil:
+cdef double c_sample_cost(double[:, :] bigram_view, vector[long] sample) nogil:
     cdef:
         double cost
-        long shape = path.size()
-        double temp_cost
+        long shape = sample.size()
         long index = shape - 1
-        long second = 0
 
-    cost = graph[path[index], path[0]]
+    cost = 0
     for index in prange(shape - 1):
-        second = index + 1
-        temp_cost = graph[path[index]][path[second]]
-        if temp_cost == 0:
-            return 0
-        else:
-            cost += temp_cost
+        cost += bigram_view[sample[index]][sample[index + 1]]
 
     return cost
 
-
-cpdef float route_cost(np.ndarray graph, np.ndarray path):
-
-    cdef np.ndarray[double, ndim=2, mode="c"] graph_array = graph.astype(float)
-    cdef np.ndarray[long, ndim=1, mode="c"] path_array = path
-    return c_route_cost(graph_array, path_array)
-
 @cython.wraparound(False)
 @cython.boundscheck(False)
-cdef vector[long] _swap(long[:] route_array, long index, long kindex) nogil:
+cdef vector[long] _swap(long[:] sample_array, long index, long kindex) nogil:
     cdef:
-        vector[long] new_route
-        long route_it
+        vector[long] new_sample
+        long sample_it
         long internal_index
         long mirror
         long[:] to_swap
 
-    for route_it in prange(route_array.shape[0]):
-        new_route.push_back(route_array[route_it])
+    for sample_it in prange(sample_array.shape[0]):
+        new_sample.push_back(sample_array[sample_it])
 
-    to_swap = route_array[index:kindex + 1]
+    to_swap = sample_array[index:kindex + 1]
     cdef long swap_length = kindex - index + 1
     for internal_index in range(0, swap_length, 1):
         mirror = swap_length - internal_index - 1
-        new_route[index + internal_index] = to_swap[mirror]
-    return new_route
-
+        new_sample[index + internal_index] = to_swap[mirror]
+    return new_sample
 
 @cython.boundscheck(False)  # Deactivate bounds checking
 @cython.wraparound(False)   # Deactivate negative indexing.
 def local_search(long n_words, bigram, start, end):
-    """
-    Approximate the optimal path of travelling salesman according to 2-opt algorithm
-    Args:
-        graph: 2d numpy array as graph
-        route: list of nodes
-    Returns:
-        optimal path according to 2-opt algorithm
-    Examples:
-        >>> import numpy as np
-        >>> graph = np.array([[  0, 300, 250, 190, 230],
-        >>>                   [300,   0, 230, 330, 150],
-        >>>                   [250, 230,   0, 240, 120],
-        >>>                   [190, 330, 240,   0, 220],
-        >>>                   [230, 150, 120, 220,   0]])
-        >>> tsp_2_opt(graph)
-    """
     cdef float[:] start_view = start
     cdef float[:] end_view = end
-
-    #print(n_words)
-    
 
     cdef bint improved = 1
     cdef double best_cost
@@ -269,47 +146,42 @@ def local_search(long n_words, bigram, start, end):
     cdef long index
     cdef long kindex
     cdef long max_index
-    cdef long route_shape
-    cdef double[:, :] graph_array = bigram.astype(float)
+    cdef long sample_shape
+    cdef double[:, :] bigram_array = bigram.astype(float)
 
     sample = np.arange(n_words, dtype=int)
     np.random.shuffle(sample)
     sample = np.array(sample)
-    cdef long[:] route_array = sample
 
-    cdef long route_it
-    cdef vector[long] best_found_route
-    cdef vector[long] new_route
+    cdef long[:] sample_array = sample
+
+    cdef long sample_it
+    cdef vector[long] best_found_sample
+    cdef vector[long] new_sample
     cdef long swap_length
-    cdef np.ndarray[DTYPE_int, ndim=1] final_route
+    cdef np.ndarray[DTYPE_int, ndim=1] final_sample
 
-    max_index = route_array.shape[0] - 1
-    for route_it in range(route_array.shape[0]):
-        best_found_route.push_back(route_array[route_it])
+    max_index = sample_array.shape[0] - 1
+    for sample_it in range(sample_array.shape[0]):
+        best_found_sample.push_back(sample_array[sample_it])
 
-    best_cost = c_route_cost(graph_array, best_found_route) + start_view[best_found_route[0]] + end_view[best_found_route[n_words-1]]
+    best_cost = c_sample_cost(bigram_array, best_found_sample) + start_view[best_found_sample[0]] + end_view[best_found_sample[n_words-1]]
     while improved == 1:
         improved = 0
         for index in range(1, max_index):
             for kindex in range(index + 1, max_index):
                 # Swap internally between index and kindex
                 with nogil, parallel():
-                    new_route = _swap(route_array, index, kindex)
-                cost = c_route_cost(graph_array, new_route) + start_view[new_route[0]] + end_view[new_route[n_words-1]]
+                    new_sample = _swap(sample_array, index, kindex)
+                cost = c_sample_cost(bigram_array, new_sample) + start_view[new_sample[0]] + end_view[new_sample[n_words-1]]
                 if cost > best_cost:
                     best_cost = cost
-                    best_found_route = new_route
+                    best_found_sample = new_sample
                     improved = 1
             if improved:
                 break
 
-    #print(np.expand_dims(np.array(best_found_route[:]), axis=0))
-    final_route = np.array(best_found_route[:])
-    #print(final_route)
-    #print(type(final_route))
-    #chain[k] = final_route
-
-    return final_route
+    return np.array(best_found_sample[:])
 
 @cython.boundscheck(False)  # Deactivate bounds checking
 @cython.wraparound(False)   # Deactivate negative indexing.
@@ -318,8 +190,6 @@ def two_opt_fast(long n_words, long n_samples, long N, bigram, start, end):
 
     for k in range(n_samples):
         res = local_search(n_words, bigram, start, end)
-        #print(res)
-        #print(type(res))
         chain[k] = res
 
     return chain
