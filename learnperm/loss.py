@@ -107,8 +107,33 @@ class Two_opt(nn.Module):
             start = start.detach().cpu().numpy()
             end = end.detach().cpu().numpy()
 
-            chain = learnperm.faststuff.two_opt(n_words, self.n_samples, self.N, bigram, start, end)
+            #chain = learnperm.faststuff.two_opt(n_words, self.n_samples, self.N, bigram, start, end)
+            chain = learnperm.faststuff.two_opt_fast(n_words, self.n_samples, self.N, bigram, start, end)
             #print(chain)
+            return torch.from_numpy(chain).to(device)
+
+class Three_opt(nn.Module):
+    def __init__(self, n_samples, N=10, random_start=False):
+        super().__init__()
+        if N < 1:
+            raise RuntimeError("N must be >= 1")
+        self.n_samples = n_samples
+        self.chain_size = n_samples * N
+        self.N = N
+        self.random_start = random_start
+
+    def forward(self, n_words, bigram, start, end, bigram_bias=None):
+        if bigram_bias is not None:
+            raise NotImplementedError("Et non! la flemme...")
+
+        device = bigram.device
+        with torch.no_grad():
+            bigram = bigram.detach().cpu().numpy()
+            start = start.detach().cpu().numpy()
+            end = end.detach().cpu().numpy()
+
+            chain = learnperm.faststuff.three_opt_fast(n_words, self.n_samples, self.N, bigram, start, end)
+
             return torch.from_numpy(chain).to(device)
 
 class BigramSampler(nn.Module):
@@ -233,6 +258,7 @@ class ISLoss(nn.Module):
 
         # compute sample scores
         # shape: (n batch, n words -1)
+        #print("A :", samples)
         w = bigram[samples[:, :-1], samples[:, 1:]]#.unsqueeze(-1)
         if bigram_bias is not None:
             w = w + bigram_bias[samples[:, :-1], samples[:, 1:]].unsqueeze(-1)
@@ -240,8 +266,12 @@ class ISLoss(nn.Module):
         # add start and end scores
         # shape: n batch
         w = w.sum(dim=1) + start[samples[:, 0]] + end[samples[:, -1]]
-        n_worse_than_gold = sum(gold_score > w)
-
+        #print("W", w)
+        eps = 0.000001
+        n_worse_than_gold = sum(gold_score + eps >= w)
+        #print("GOLD SCORE :", gold_score)
+        #print("N WORTH :", n_worse_than_gold)
+        #print("-----------------------------------------------")
         if self.combine:
             raise RuntimeError("To check")
             log_Z_is = math.log(math.factorial(n_words)) - math.log(n_words) + w.logsumexp(dim=0, keepdim=False)

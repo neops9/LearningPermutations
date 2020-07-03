@@ -13,6 +13,7 @@ cdef extern from "math.h":
     float INFINITY
 from cpython cimport array
 import array
+from itertools import cycle, islice, dropwhile
 
 @cython.boundscheck(False)  # Deactivate bounds checking
 @cython.wraparound(False)   # Deactivate negative indexing.
@@ -136,7 +137,7 @@ cdef vector[long] _swap(long[:] sample_array, long index, long kindex) nogil:
 
 @cython.boundscheck(False)  # Deactivate bounds checking
 @cython.wraparound(False)   # Deactivate negative indexing.
-def local_search(long n_words, bigram, start, end):
+def local_search_two_opt(long n_words, bigram, start, end):
     cdef float[:] start_view = start
     cdef float[:] end_view = end
 
@@ -189,7 +190,116 @@ def two_opt_fast(long n_words, long n_samples, long N, bigram, start, end):
     chain = np.empty((n_samples, n_words), dtype=int)
 
     for k in range(n_samples):
-        res = local_search(n_words, bigram, start, end)
+        res = local_search_two_opt(n_words, bigram, start, end)
+        chain[k] = res
+
+    return chain
+
+# 3-opt algorithm
+
+@cython.boundscheck(False)  # Deactivate bounds checking
+@cython.wraparound(False)   # Deactivate negative indexing.
+def possible_segments(N):
+    """ Generate the combination of segments """
+    segments = ((i, j, k) for i in range(1, N) for j in range(i + 2, N-1) for k in range(j + 2, N - 1 + (i > 0)))
+    return segments
+
+@cython.boundscheck(False)  # Deactivate bounds checking
+@cython.wraparound(False)   # Deactivate negative indexing.
+def reverse_segments(route, case, i, j, k):
+    if (i - 1) < (k % len(route)):
+        first_segment = np.concatenate((route[k% len(route):], route[:i]))
+    else:
+        first_segment = route[k % len(route):i]
+    second_segment = route[i:j]
+    third_segment = route[j:k]
+
+    if case == "1":
+        # first case is the current solution ABC
+        solution = route
+    elif case == "2":
+        # A'BC
+        solution = np.concatenate((first_segment[::-1], second_segment, third_segment))
+    elif case == "3":
+        # ABC'
+        solution = np.concatenate((first_segment, second_segment, third_segment[::-1]))
+    elif case == "4":
+        # A'BC'
+        solution = np.concatenate((first_segment[::-1], second_segment, third_segment[::-1]))
+    elif case == "5":
+        # A'B'C
+        solution = np.concatenate((first_segment[::-1], second_segment[::-1], third_segment))
+    elif case == "6":
+        # AB'C
+        solution = np.concatenate((first_segment, second_segment[::-1], third_segment))
+    elif case == "7":
+        # AB'C'
+        solution = np.concatenate((first_segment, second_segment[::-1], third_segment[::-1]))
+    elif case == "8":
+        # A'B'C
+        solution = np.concatenate((first_segment[::-1], second_segment[::-1], third_segment[::-1]))
+    return solution
+
+@cython.boundscheck(False)  # Deactivate bounds checking
+@cython.wraparound(False)   # Deactivate negative indexing.
+def sample_cost(bigram, sample):
+    cost = 0
+    shape = len(sample)
+    index = shape - 1
+    for index in range(shape - 1):
+        cost += bigram[sample[index]][sample[index + 1]]
+
+    return cost
+
+@cython.boundscheck(False)  # Deactivate bounds checking
+@cython.wraparound(False)   # Deactivate negative indexing.
+def get_solution_cost_change(graph, start, end, route, case, i, j, k):
+    """ Compare current solution with 7 possible 3-opt moves"""
+    s = reverse_segments(route, case, i, j, k)
+    return sample_cost(graph, route) + start[route[0]] + end[route[len(route)-1]]
+
+@cython.boundscheck(False)  # Deactivate bounds checking
+@cython.wraparound(False)   # Deactivate negative indexing.
+def local_search_three_opt(long n_words, bigram, start, end):
+    moves_cost = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0, "8": 0}
+    opt_cases = ["1", "2", "3", "4", "5", "6", "7", "8"]
+    improved = True
+
+    sample = np.arange(n_words, dtype=int)
+    np.random.shuffle(sample)
+    sample = np.array(sample)
+    best_found_sample = sample
+
+    while improved:
+        improved = False
+        for (i, j, k) in possible_segments(n_words):
+            # we check all the possible moves and save the result into the dict
+            for opt_case in opt_cases:
+                moves_cost[opt_case] = get_solution_cost_change(bigram, start, end, best_found_sample, opt_case, i, j, k)
+            # we need the minimum value of substraction of old route - new route
+            best_return = max(moves_cost, key=moves_cost.get)
+
+            if moves_cost[best_return] > moves_cost["1"]:
+                best_found_sample = reverse_segments(best_found_sample, best_return, i, j, k)
+                improved = True
+                c += 1
+                break
+
+    # just to start with the same node -> we will need to cycle the results.
+    cycled = cycle(best_found_sample)
+    skipped = dropwhile(lambda x: x != 0, cycled)
+    sliced = islice(skipped, None, len(best_found_sample))
+    best_found_sample = list(sliced)
+
+    return best_found_sample
+
+@cython.boundscheck(False)  # Deactivate bounds checking
+@cython.wraparound(False)   # Deactivate negative indexing.
+def three_opt_fast(long n_words, long n_samples, long N, bigram, start, end):
+    chain = np.empty((n_samples, n_words), dtype=int)
+
+    for k in range(n_samples):
+        res = local_search_three_opt(n_words, bigram, start, end)
         chain[k] = res
 
     return chain
