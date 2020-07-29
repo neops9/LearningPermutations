@@ -87,6 +87,83 @@ class BetterMCMC(nn.Module):
             #print(torch.from_numpy(np.array([chain])).to(device).shape)
             return torch.from_numpy(chain).to(device)
 
+class TwoOptMCMC(nn.Module):
+    def __init__(self, n_samples, N=10, burnin=100, random_start=False):
+        super().__init__()
+
+        if N < 1:
+            raise RuntimeError("N must be >= 1")
+
+        self.n_samples = n_samples
+        self.chain_size = n_samples * N
+        self.N = N
+        self.burnin = burnin
+        self.random_start = random_start
+
+    def permut_weight(self, bigrams, start, end, permut):
+        return bigrams[permut[:-1], permut[1:]].sum() + start[permut[0]] + end[permut[-1]] 
+
+    def mcmc_samples(self, bigram_weights, start_weights, end_weights, n_samples, burn_in=0, n_skip=0):
+        n_words = bigram_weights.shape[0]
+        samples = np.empty((n_samples, n_words), dtype=int)
+
+        # random first permutation
+        permut = np.random.permutation(n_words)
+        permut_w = self.permut_weight(bigram_weights, start_weights, end_weights, permut)
+
+        # temp memory, allocate only once
+        permut2 = np.empty_like(permut)
+
+        n_filled = 0
+        for i in itertools.count(start=0):
+            l = random.randint(1, n_words - 1) # length of the part to move
+            a = random.randint(0, n_words - l) # beginning point
+            b = a + l # end point
+            c = (b + random.randint(0, n_words - l - 1) + 1) % (n_words + 1) # position where to move
+
+            # build the permutation
+            if a < c:
+                permut2[0:a] = permut[0:a]
+                permut2[a:a + c - b] = permut[b:c]
+                permut2[a + c - b: a + c - b + b - a] = permut[a:b]
+                permut2[a + c - b + b - a:] = permut[c:]
+            else:
+                permut2[0:c] = permut[0:c]
+                permut2[c:c + b - a] = permut[a: b]
+                permut2[c + b - a:c + b - a + a - c] = permut[c:a]
+                permut2[c + b - a + a - c:] = permut[b:]
+
+            permut2_w = self.permut_weight(bigram_weights, start_weights, end_weights, permut2)
+
+            # check if we accept the permutation or not
+            p = min(1, math.exp(permut2_w - permut_w))
+            if p > random.uniform(0, 1):
+                permut[:] = permut2
+                permut_w = permut2_w
+            else:
+                pass
+
+            if i >= burn_in and (i - burn_in) % (n_skip + 1) == 0:
+                # save sample
+                samples[n_filled] = permut
+                n_filled += 1
+                if n_filled == n_samples:
+                    break
+
+        return samples
+
+    def forward(self, n_words, bigram, start, end, bigram_bias=None):
+        if bigram_bias is not None:
+            raise NotImplementedError("Et non! la flemme...")
+
+        with torch.no_grad():
+            bigram = bigram.detach().cpu().numpy()
+            start = start.detach().cpu().numpy()
+            end = end.detach().cpu().numpy()
+
+            chain = self.mcmc_samples(bigram, start, end, self.n_samples, burn_in=self.burnin, n_skip=self.N)
+            return chain
+
 class Two_opt(nn.Module):
     def __init__(self, n_samples, N=10, random_start=False):
         super().__init__()
