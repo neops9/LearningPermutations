@@ -10,6 +10,12 @@ from learnperm.data import load_embeddings, read_conllu
 from learnperm.batch import KMeansBatchIterator
 from learnperm.dict import build_tags_dictionnary
 
+from scipy.stats import kendalltau
+
+def get_reordering():
+    import reordering
+    return reordering
+
 def save_checkpoint(state, is_best, path, filename='checkpoint.pth.tar'):
     torch.save(state, path + filename)
     if is_best:
@@ -34,6 +40,7 @@ cmd.add_argument('--resume', type=str, default="", help="Resume training from a 
 cmd.add_argument('--batch-size', type=int, default=2500, help="Maximum number of words per batch")
 cmd.add_argument('--batch-clusters', type=int, default=32, help="Number of clusters to use to construct batches")
 cmd.add_argument('--decay-rate', type=float, default=0.96, help="Decay rate of the ExponentialLR scheduler")
+cmd.add_argument('--structured-eval', action="store_true", help="Use structured evaluation")
 network.Network.add_cmd_options(cmd)
 args = cmd.parse_args()
 
@@ -60,6 +67,8 @@ dev_datas = {
     lang: read_conllu(args.data, [lang], "dev", word_to_id, unk_idx, tags_dict, device=args.storage_device)
     for lang in dev_langs
 }
+max_dev_sentence_len = max(max(len(s["tokens"]) for s in data) for data in dev_datas.values())
+
 dev_datas = {
     lang: KMeansBatchIterator(data, args.batch_size, args.batch_clusters, len, shuffle=False)
     for lang, data in dev_datas.items()
@@ -91,6 +100,9 @@ train_loss_builder.to(args.device)
 # we always use the ISLoss for dev eval
 dev_loss_builder = loss.ISLoss(sampler)
 dev_loss_builder.to(args.device)
+
+if args.structured_eval:
+    cpp_chart = get_reordering().new_chart_n4(max_dev_sentence_len)
 
 def compute_batch_loss(batch, builder):
     batch_lengths = [len(s["tokens"]) for s in batch]
@@ -157,17 +169,47 @@ for epoch in range(args.epochs):
     dev_losses = {}
     dev_n_worses = {}
     for lang, data in dev_datas.items():
-        dev_loss = 0.
-        dev_n_worse = 0.
-        dev_denum = 0.
-        with torch.no_grad():
-            for batch in data:
-                dev_denum += len(batch)
-                l, n = compute_batch_loss(batch, dev_loss_builder)
-                dev_loss += l.item()
-                dev_n_worse += n
-        dev_losses[lang] = dev_loss / dev_denum
-        dev_n_worses[lang] = dev_n_worse / (dev_denum * args.samples)
+        if args.structured_eval:
+            taus = list()
+
+            with torch.no_grad():
+                for batch in data:
+                    batch_lengths = [len(s["tokens"]) for s in batch]
+                    batch_bigram, batch_start, batch_end = model(batch)
+
+                    for b, l in enumerate(batch_lengths):
+                        bigram = batch_bigram[b, :l, :l]
+                        start = batch_start[b, :l]
+                        end = batch_end[b, :l]
+
+                        n_words = bigram.shape[0]
+                        r = torch.arange(n_words)
+
+                        p = get_reordering().argmax_n4(
+                            cpp_chart,
+                            bigram.shape[0],
+                            bigram.data_ptr(),
+                            start.data_ptr(),
+                            end.data_ptr(),
+                            -1,
+                            -1
+                        )
+                        taus.append(kendalltau(list(range(len(p))), p).correlation)
+
+            dev_losses[lang] = float("nan")
+            dev_n_worses[lang] = sum(taus) / len(taus)
+        else:
+            dev_loss = 0.
+            dev_n_worse = 0.
+            dev_denum = 0.
+            with torch.no_grad():
+                for batch in data:
+                    dev_denum += len(batch)
+                    l, n = compute_batch_loss(batch, dev_loss_builder)
+                    dev_loss += l.item()
+                    dev_n_worse += n
+            dev_losses[lang] = dev_loss / dev_denum
+            dev_n_worses[lang] = dev_n_worse / (dev_denum * args.samples)
 
     print(
         "Epoch %i:"
