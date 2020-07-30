@@ -178,9 +178,9 @@ for epoch in range(args.epochs):
                     batch_bigram, batch_start, batch_end = model(batch)
 
                     for b, l in enumerate(batch_lengths):
-                        bigram = batch_bigram[b, :l, :l]
-                        start = batch_start[b, :l]
-                        end = batch_end[b, :l]
+                        bigram = batch_bigram[b, :l, :l].cpu().contiguous()
+                        start = batch_start[b, :l].cpu().contiguous()
+                        end = batch_end[b, :l].cpu().contiguous()
 
                         n_words = bigram.shape[0]
                         r = torch.arange(n_words)
