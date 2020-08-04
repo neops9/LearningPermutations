@@ -78,7 +78,7 @@ def read_bias(path, n=2000, m=20):
     
     bigrams = list()
 
-    for i, sentence in enumerate(test_data):
+    for i, sentence in enumerate(train_data):
         n_words = len(sentence["tokens"])
 
         batch_bigram, batch_start, batch_end = model([sentence])
@@ -95,7 +95,7 @@ def read_bias(path, n=2000, m=20):
             
     return bigrams
 
-def compute_tau(weights, c, left_limit=-1, right_limit=-1):
+def compute_tau(cpp_chart_array, weights, c, left_limit=-1, right_limit=-1):
     taus = list()
     for bi, s, e in weights:
         n_words = bi.shape[0]
@@ -104,7 +104,7 @@ def compute_tau(weights, c, left_limit=-1, right_limit=-1):
         bi[r[:-1], r[1:]] += c
 
         p = reordering.argmax_n4(
-            cpp_chart,
+            cpp_chart_array,
             bi.shape[0],
             bi.data_ptr(),
             s.data_ptr(),
@@ -190,11 +190,11 @@ for i, sentence in enumerate(test_data):
 
 
 # add bias
-'''if args.bias != "":
+if args.bias != "":
     bigrams_train = read_bias(args.bias, n=100, m=50)
     cpp_chart = reordering.new_chart_n4(max(w[0].shape[0] for w in bigrams_train))
     x = np.linspace(-10, 10, 50)
-    y = [compute_tau(bigrams_train, i, 5, 5) for i in x]
+    y = [compute_tau(cpp_chart, bigrams_train, i, 5, 5) for i in x]
 
     bias = 0
 
@@ -203,13 +203,13 @@ for i, sentence in enumerate(test_data):
             bias = x[idx]
             break
 
-    print("BIAS :", bias)
+    print("BIAS :", bias, file=sys.stderr, flush=True)
 
     for i in range(len(bigrams)):
         #print(bigrams[i].shape[0])
         arange = np.arange(bigrams[i].shape[0])
         bigrams[i][arange[:-1], arange[1:]] += bias
-'''
+
 infile = open(input_filename, 'w')
 
 for s, e, b in zip(starts, ends, bigrams):
