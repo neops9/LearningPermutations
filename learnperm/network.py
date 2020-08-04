@@ -300,8 +300,8 @@ class PermutationModule(nn.Module):
         bigram = self.bigram_output_proj(proj)
 
         if self.has_bigram_bias() and add_bigram_bias:
-            bigram = bigram + self.get_bigram_bias(n_words, bigram.device)
-
+            bigram = bigram + self.get_bigram_bias(n_words, bigram.device).squeeze(0).unsqueeze(-1)
+        
         return bigram, start, end
 
     def has_bigram_bias(self):
