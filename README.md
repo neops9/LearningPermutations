@@ -36,7 +36,7 @@ python permute.py
     --program ./reordering_program
 ```
 
-To run version **O(n)** of the algorithm set options "left-limit" and "right-limit" to 0.
+To run the **O(n)** version of the algorithm set options "left-limit" and "right-limit" to 0.
 
 ## Run cross-lingual dependency parser
 
