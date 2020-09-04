@@ -40,6 +40,12 @@ To run the **O(n)** version of the algorithm set options "left-limit" and "right
 
 ## Run cross-lingual dependency parser
 
+**(!) Il faut inverser les colonnes 4 et 5 des fichiers permutés pour les lancer sur le parseur**
+
+```
+awk -v FS='\t' -v OFS='\t' '{ t = $4; $4 = $5; $5 = t; print; }' test.conllu> test.conllu.tmp ; mv test.conllu.tmp test.conllu
+```
+
 ### SelfAtt-Graph & RNN-Graph
 
 ```
