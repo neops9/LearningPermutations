@@ -55,11 +55,11 @@ python ./examples/analyze.py
     --gpu 
     --test ./test.conllu 
     --decode mst
-    --model_path /pretrained_models/final_{grnn.sh_1 | gtrans.sh_1}
+    --model_path ./pretrained_models/final_{grnn.sh_1 | gtrans.sh_1}
     --out_filename whatever
     --model_name network.pt
     --punctuation 'PUNCT' 'SYM'
-    --extra_embed /ud2_embeddings/wiki.multi.{lang}.vec
+    --extra_embed ./ud2_embeddings/wiki.multi.{lang}.vec
 ```
 
 ### SelfAtt-Stack & RNN-Stack
@@ -72,9 +72,9 @@ python ./examples/analyze.py
     --gpu 
     --test ./test.conllu 
     --decode mst
-    --model_path /pretrained_models/final_{srnn.sh_1 | strans.sh_1}
+    --model_path ./pretrained_models/final_{srnn.sh_1 | strans.sh_1}
     --out_filename whatever
     --model_name network.pt
     --punctuation 'PUNCT' 'SYM'
-    --extra_embed /ud2_embeddings/wiki.multi.{lang}.vec
+    --extra_embed ./ud2_embeddings/wiki.multi.{lang}.vec
 ```
