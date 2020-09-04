@@ -1,19 +1,13 @@
 import argparse
-import shutil
 import torch
 import sys
 import io
 import os
 import subprocess
 from learnperm import loss, network
-import time
-import torch.nn as nn
 import learnperm.conll as conll
 import numpy as np
-import re
-from learnperm.dict import build_tags_dictionnary
 import learnperm.special_tokens
-from scipy.stats import kendalltau
 
 def read_conllu(path, word_to_id, unk_idx, tags_dict, min_length=2, device="cpu"):
     ret = list()
