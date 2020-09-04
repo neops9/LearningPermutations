@@ -49,7 +49,7 @@ awk -v FS='\t' -v OFS='\t' '{ t = $4; $4 = $5; $5 = t; print; }' test.conllu> te
 ### SelfAtt-Graph & RNN-Graph
 
 ```
-python /examples/analyze.py 
+python ./examples/analyze.py 
     --parser biaffine 
     --ordered 
     --gpu 
@@ -65,7 +65,7 @@ python /examples/analyze.py
 ### SelfAtt-Stack & RNN-Stack
 
 ```
-python /examples/analyze.py 
+python ./examples/analyze.py 
     --parser stackptr 
     --beam 5
     --ordered 
